@@ -3,20 +3,34 @@ library(LDlinkR)
 library(parallel)
 
 # TMP: Test inputs
-commandArgs <- \(unused) { "--geno_files data/ukbb/*.bgen$ --score_file score_files/alzheimers.csv --sample_file data/ukbb/*.sample$" }
-commandArgs <- \(unused) { "--geno_files data/mxbb/*       --score_file score_files/udler2018.csv$" }
+commandArgs <- \(unused=T) { "--geno_files data/ukbb/*.bgen$ --score_file score_files/alzheimers.csv --sample_file data/ukbb/*.sample$" }
+#commandArgs <- \(unused=T) { "--geno_files data/mxbb/*       --score_file score_files/udler2018.csv$ --score_file_pos_col 5" }
 
-args <- list() # Parse command-line args
+# Default arguments
+args <- list()
+args$scratch_dir <- "pprs_scratch"
+args$score_file_chr_col <- 1
+args$score_file_pos_col <- 2
+args$score_file_id_col  <- 3
+args$score_file_ref_col <- 4
+args$score_file_alt_col <- 5
+args$score_file_ea_col  <- 6
+
+# Parse command-line args
 pieces <- tstrsplit(split="--", paste(commandArgs(T), collapse=" "))[-1]
 for(piece in pieces) { parts <- unlist(tstrsplit(piece," ")); args[[parts[[1]]]] <- parts[-1] }
 
 # Resolve patterns to actual files (e.g. *.bgen -> chr1.bgen, chr2.bgen)
-args$geno_files  <- list.files(dirname(args$geno_files ), pattern=basename(args$geno_files ), full.names=T)
-args$score_file  <- list.files(dirname(args$score_file), pattern=basename(args$score_file  ), full.names=T)
+args$geno_files  <- list.files(dirname(args$geno_files ), pattern=basename(args$geno_files  ), full.names=T)
+args$score_file  <- list.files(dirname(args$score_file ), pattern=basename(args$score_file  ), full.names=T)
 if(!is.null(args$sample_file)) {
 args$sample_file <- list.files(dirname(args$sample_file), pattern=basename(args$sample_file), full.names=T)
 }
-if(is.null(args$scratch_dir)) { args$scratch_dir <- "pprs_scratch" }; dir.create(args$scratch_dir, showWarnings=F)
+
+# Misc.
+dir.create(args$scratch_dir, recursive=T, showWarnings=F)
+args$col_idxs <- sapply(c(chr=args$score_file_chr_col, pos=args$score_file_pos_col, id=args$score_file_id_col, ref=args$score_file_ref_col, alt=args$score_file_alt_col, ea=args$score_file_ea_col),
+                        as.integer)
 
 # --- Input validation ---
 ## Required files provided? Not too many? They exist?
@@ -34,7 +48,6 @@ if(all(grepl("bgen$",args$geno_files))) {
   # TODO would be good to detect index files and warn if not found
   geno_files_type <-"bgen" 
 } else if(all(grepl("bcf(.gz)?$|vcf(.gz)?$",args$geno_files))) {
-  message(paste(c("Detected .vcf/.bcf files:",args$geno_files),collapse='\n'))
   # TODO would be good to detect index files and warn if not found
   geno_files_type <- "vcf/bcf"
 } else if(all(grepl("bed$|bim$|fam$",args$geno_files))) {
@@ -43,18 +56,28 @@ if(all(grepl("bgen$",args$geno_files))) {
 } else if(all(grepl("pgen$|pvar$|psam$|bim$|fam$",args$geno_files))) {
   geno_files_type <- "plink2"
 } else { stop(paste(c("Input geno_files format is unsupported, or is a mix of different formats. Below is the list of detected geno_files:",args$geno_files),collapse='\n')) }
-message("Detected ",geno_files_type," files:\n", paste(args$geno_files,collapse='\n'))
+message("Detected ",geno_files_type," files:\n    ", paste(args$geno_files,collapse='\n    '))
 
 ## Make sure --score_file's format is correct.
-args$score_file <- setnames(fread(args$score_file), old=1:6, new=c("chr","pos","ref","alt","id","ea"))
+if(anyNA(args$col_idxs)) stop(paste0("Command-line argument --score_file_",names(args$col_idxs)[is.na(args$col_idxs)],"_col"), " was invalid. Please provide integers, not column names.")
+message(paste0("Using score file's \"",names(fread(args$score_file,nrow=0))[args$col_idxs],"\" column as ",names(args$col_idxs),"\n"))
+
+args$score_file <- fread(args$score_file) |> setnames(old=args$col_idxs, new=names(args$col_idxs))
+
+weights_cols <- args$score_file[, max(args$col_idxs+1):ncol(args$score_file)]
+message("Using score file weight columns:\n    \"",paste(names(weights_cols),collapse="\"\n    \""),"\"")
+
 anyDuplicated(args$score_file$id)
 ###TODO
+#### Message "using names(args$score_file)[args$chr_col] as chromosome", etc.
 #### Is now the time to check if the id format is the same between the geno_files and the score_file? Or wait until later?
 
 ## LDlink inputs
 ###TODO: If neither token nor pop provided, warn that no proxies will be gotten if some variants are missing from geno_files. Complain if not both token & pop provided. If pop not provided, LDlinkR::list_pop(), but warn that ALL or multiple pops may be slower. 
 
 # --- Finished input validation ---
+
+
 
 # TODO: Proxies. See what variants are missing from the genotype files, grab proxies, check if any of _those_ are missing, repeat. Don't forget to update score file df with the proxies.
 # Why not use PLINK to read all formats? Because it cannot make use of .bgi (bgen) or .csi (vcf/bcf) index files. Instead it would try to convert everything to plink2 format first, (very slow for huge datasets).
