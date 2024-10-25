@@ -40,6 +40,7 @@ if(length(args$score_file) >1) stop("Detected multiple score   files. Please pro
 if(length(args$sample_file)>1) stop("Detected multiple .sample files. Please provide only one:", paste(args$sample_file,collapse=' '))
 if(length(args$geno_files)==0) stop("Provided --geno_files do not exist!  \n(If you're submitting a job on a compute cluster, you may need to specify absolute file paths.)")
 if(length(args$score_file)==0) stop("Provided --score_file does not exist!\n(If you're submitting a job on a compute cluster, you may need to specify absolute file paths.)")
+# TODO: use tools:file_path_as_absolute and remove the "(If you're submitting a job..." message
 
 ## Detect --geno_file type (and --sample_file)
 if(all(grepl("bgen$",args$geno_files))) {
@@ -58,7 +59,7 @@ if(all(grepl("bgen$",args$geno_files))) {
   args$geno_files <- unique(sub("pgen$|pvar$|psam$|bim$|fam$","",args$geno_files)) # PLINK only takes the file prefix
   geno_files_type <- "plink2"
 } else { stop(paste(c("Input geno_files format is unsupported, or is a mix of different formats. Below is the list of detected geno_files:",args$geno_files),collapse='\n')) }
-message("Detected ",geno_files_type," files:\n    ", paste(args$geno_files,collapse='\n    '))
+message("Detected ",geno_files_type," files:\n    ", paste(args$geno_files,collapse="\n    "))
 
 ## Make sure --score_file's format is correct.
 if(anyNA(args$col_idxs)) stop(paste0("Command-line argument --score_file_",names(args$col_idxs)[is.na(args$col_idxs)],"_col"), " was invalid. Please provide integers, not column names.")
@@ -70,7 +71,7 @@ weights_cols <- score_dt[, max(args$col_idxs+1):ncol(score_dt)]
 message("Using score file weight columns:\n    \"",paste(names(weights_cols),collapse="\"\n    \""),"\"")
 
 ####TODO Is now the time to check if the id format is the same between the geno_files and the score_file? Or wait until later?
-anyDuplicated(score_dt$id) #TODO suggest code to merge IDs using group_by or data.table by=.... Or, just do this automatically b/c it'd only be one or two lines?
+anyDuplicated(score_dt$id) #TODO suggest code to merge IDs using group_by or data.table by=.... Or, just do this automatically b/c it'd only be one or two lines? Or just --rm-dup force-first in plink and warn the user (assuming that would fix this, not 100 sure if --rm-dups would apply to the score file)
 
 ## LDlink inputs
 ###TODO: If neither token nor pop provided, warn that no proxies will be gotten if some variants are missing from geno_files. Complain if not both token & pop provided. If pop not provided, LDlinkR::list_pop(), but warn that ALL or multiple pops may be slower. 
@@ -92,8 +93,8 @@ fwrite(score_dt_simple, score_file_path_simple, sep=' ')
 
 # Extract full genotype data for the variants in the --score_file.  
 # Why not use PLINK to read all formats? Because it cannot make use of .bgi (bgen) or .csi (vcf/bcf) index files. Instead it would try to convert everything to plink2 format first, (very slow for huge datasets).
-geno_subset_file_paths <- file.path(args$scratch_dir,paste0(basename(args$geno_files),"-subset"))
-if(!all(file.exists(geno_subset_file_paths))) {
+geno_subset_file_paths <- paste0(args$scratch_dir,"/",basename(args$score_file),"-",basename(args$geno_files))
+if(!all(file.exists(geno_subset_file_paths))) { # Don't rerun this if the subsetted files alredy exist, big bottleneck.
   ranges_file <- file.path(args$scratch_dir,"variant_ranges.txt")
   ids_file    <- file.path(args$scratch_dir,"variant_ids.txt"   )
   writeLines(score_dt$id, ids_file)
@@ -125,9 +126,9 @@ if(!all(file.exists(geno_subset_file_paths))) {
     )
     else stopifnot(F)
   })
-  message("Will run the following commands to extract genotype data:\n    ", paste(geno_extraction_cmds,collapse='\n    '))
+  message("\nRunning the following commands to extract genotype data...:\n    ", paste(geno_extraction_cmds,collapse="\n    "))
   
-  invisible(mclapply(geno_extraction_cmds,system))
+  invisible(mclapply(geno_extraction_cmds,system,ignore.stderr=T))
 }
                                                                                               # v TODO v
 if(geno_files_type=="bgen")   plink_input_flags <- paste0("--bgen  ",geno_subset_file_paths," ref-unknown --sample ",args$sample_file)
@@ -136,32 +137,36 @@ if(geno_files_type=="vcf")    plink_input_flags <- paste0("--vcf   ",geno_subset
 if(geno_files_type=="plink1") plink_input_flags <- paste0("--bfile ",geno_subset_file_paths)
 if(geno_files_type=="plink2") plink_input_flags <- paste0("--pfile ",geno_subset_file_paths)
 stopifnot(!is.null(plink_input_flags))
+plink_output_flags <- paste0("--allow-misleading-out-arg --out ", geno_subset_file_paths)
+# PRS result files will be "<scratch_dir>/<score_filename>-<geno_filename>.sscore
 
+# Finally calculate PRSes!!
 plink_prs_cmds <- paste(
   "plink2", plink_input_flags,
   "--score", score_file_path_simple,
     "ignore-dup-ids",
     "header-read", # Use row as names for clusters
-    "list-variants",
     "cols=scoresums", # Output plain sum(dosages*weights), without averaging, so that we can sum scores across chromosomes. Then we can take the average.
-  "--score-col-nums", paste0("3-",ncol(score_dt_simple)) # Skip ID & effect allele columns
+  "--score-col-nums", paste0("3-",ncol(score_dt_simple)), # Skip ID & effect allele columns
   #"--rm-dup force-first",
+  plink_output_flags
 )
-message("Will run the following commands to calculate PRSes:\n    ", paste(plink_prs_cmds,collapse='\n    '))
+message("\nRunning the following commands to calculate PRSes...:\n    ", paste(plink_prs_cmds,collapse="\n    "))
 
-# Finally calculate PRSes!!
-mclapply(plink_prs_cmds[[2]],system)
+err_codes <- mclapply(plink_prs_cmds,system, ignore.stdout=T,ignore.stderr=T)
 
-# TODO: sum scores from each run
-# TODO make sure that plink erroring from chrs w/o 0 variants is ignored
-
+if(any(err_codes!=0)) message("\nPLINK PRS calculation errors happened for some files. Check these logs:\n    ", paste0(geno_subset_file_paths[err_codes!=0],".log",collapse="\n    "))
+# TODO: No variants found should not be considered an error, because it is normal that a user provides separate chr 1-22 files, but there is not a weighted variant in every chr. To avoid this, right after the LDlink step, geno_subset_files with no score file variants should be removed. Something like that.
 
 
+# Sum scores from each run
+prs_files      <- list.files(path=args$scratch_dir, pattern=paste0(basename(geno_subset_file_paths),".sscore",collapse='|')) # Why list.files and not just add .sscore? Because some .sscore files might not exist if a chr had 0 of the score file's variants in it.
+prs_file_paths <- file.path(args$scratch_dir, prs_files)
+prs_sums <- rbindlist(lapply(prs_file_paths,fread))[, lapply(.SD, sum), by="#IID"]
+#prs_sums[, 3:ncol(prs_sums) := lapply(.SD,'/',ALLELE_CT), .SDcols = 3:ncol(prs_sums)] # [.SD := lapply(.SD,'/',ALLELE_CT), .SDcols=-c("#IID","ALLELE_CT")] should work but doesn't I think because old-ish version of data.table on Broad server
+prs_sums
+
+fwrite(prs_sums, "my_results.txt") #TMP
 
 
-
-# Calculate a series of P&T-based scores
-#plink2
-#  --score f
-#  --q-score-range ${prs_dir}/${tag}_pt_range_list.txt ${input_file} 1 8 header \
-#	--out ${prs_dir}/${tag}_chr${chr} \
+# TODO: --q-score-range option useful for global PRS, see Kenny script for referene
