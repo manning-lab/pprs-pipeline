@@ -3,7 +3,7 @@ library(LDlinkR)
 library(parallel)
 
 # TMP: Test inputs
-commandArgs <- \(unused=T) { "--geno_files data/ukbb/*.bgen$ --score_file score_files/alzheimers2.csv --sample_file data/ukbb/*.sample$ --score_file_id_col 6 --score_file_ref_col 3 --score_file_alt_col 4 --score_file_ea_col 7" }
+commandArgs <- \(unused=T) { "--geno_files data/ukbb/*.bgen$ --score_file score_files/alzheimers.csv --sample_file data/ukbb/*.sample$ --score_file_id_col 6 --score_file_ref_col 3 --score_file_alt_col 4 --score_file_ea_col 7" }
 #commandArgs <- \(unused=T) { "--geno_files data/mxbb/*       --score_file score_files/udler2018.csv$ --score_file_pos_col 5" }
 
 # Default arguments
@@ -147,6 +147,7 @@ plink_prs_cmds <- paste(
     "ignore-dup-ids",
     "header-read", # Use row as names for clusters
     "cols=scoresums", # Output plain sum(dosages*weights), without averaging, so that we can sum scores across chromosomes. Then we can take the average.
+    "list-variants",
   "--score-col-nums", paste0("3-",ncol(score_dt_simple)), # Skip ID & effect allele columns
   #"--rm-dup force-first",
   plink_output_flags
