@@ -95,8 +95,77 @@ if(score_dt[,              anyDuplicated(id)>0     ]) stop("Found duplicated IDs
 weights_cols <- score_dt[, (score_col_farthest+1):ncol(score_dt) ]
 message('Using score file weight columns:\n    "',paste(names(weights_cols),collapse='"\n    "'),'"')
 
+## Get list of score file variant IDs present in the geno_files (not extracting genotype data yet).
+## If no variants matched, probably because of different ID formats.
+## This list will also be used for getting proxies later.
+## Why not use PLINK to read all formats? Because it cannot make use of .bgi (bgen) or .csi (vcf/bcf) index files. Instead it would try to convert everything to plink2 format first, (very slow for huge datasets).
+ranges_file    <- file.path(args$scratch_dir,"score_variant_ranges.txt"   )
+score_ids_file <- file.path(args$scratch_dir,"score_variant_ids.txt"      )
+writeLines(score_dt$id, score_ids_file)
+writeLines(score_dt[,paste0(chr,"\t",pos)], ranges_file)
+
+ids_found_file <- file.path(args$scratch_dir,"found_score_variant_ids.snplist")
+unlink(ids_found_file)
+
+system("mkfifo tmp.snplist") # Explained later
+variant_id_extraction_cmds <- sapply(args$geno_files, \(gf) {
+  if(geno_files_type=="bgen") paste0(
+    "bgenix -list -g ", gf, # -list Only list variant info, no genotype data
+    #" -incl-range ", ranges_file, # Purposefully commented out. bgenix extracts the _union_ of -incl-range and -incl-rsids. This can lead to variants we don't want which are at the same position as the desired variants. Doesn't help speed because bgen files are already indexed by ID, not only chr+pos. 
+    " -incl-rsids ", score_ids_file,
+    " | cut -f1", # Keep only ID column
+    " | sed '/# bgenix/d' | sed '/alternate_ids/d'", # Remove comment and colname lines
+    " >> ", ids_found_file
+  )
+  else if(geno_files_type %in% c("vcf","bcf")) paste0(
+    "bcftools view -GH", gf, # -GH means only list variant info, no genotype data nor header
+    " -R ", ranges_file, # Need to filter by ranges otherwise will be very slow, because VCF/BCF files are only indexed by chr+pos, not ID. Unlike bgenix, -R combined with a -i filter will take the intersection of variants.
+    " -i'ID=@",score_ids_file,"'",
+    " -Ob", # Output compressed BCF format
+    " | cut -f3",
+    " >> ", ids_found_file
+  )
+  else if(geno_files_type=="plink1") paste0(
+    "plink2 --bfile", gf,
+    " --rm-dup force-first", # If dups, PLINK errors unless this is here.
+    " --extract ", score_ids_file,
+    " --write-snplist --out tmp", # PLINK automatically adds ".snplist" to the name
+    " & cat tmp.snplist >> ", ids_found_file
+  )
+  else if(geno_files_type=="plink2") paste0(
+    "plink2 --pfile", gf,
+    " --rm-dup force-first",
+    " --extract ", score_ids_file,
+    " --write-snplist --out tmp",
+    " & cat tmp.snplist >> ", ids_found_file
+  )
+  else stopifnot(F)
+})
+
+invisible(mclapply(variant_id_extraction_cmds, system))
+unlink("tmp.snplist")
+# Explanation for mkfifo(): used for PLINK inputs above.
+# PLINK normally only outputs to file, not stdout. So can't just use `>>` to append all IDs to one merged file.
+# So, I would have to have each plink cmd output to a seprately-named file, then merge all the files afterward, complicated.
+# Instead, I fool PLINK into writing into a _named_ pipe with the same name as its output file name would be.
+# The command then hangs until what it writes into the pipe is consumed, hence the '& cat ...', which will run in another thread.
+# TODO this is cool and all, but maybe rewrite to the arguably simpler alternative because the files could just be named snplists <- paste0(args$geno_files,".snplist") and then merged w/ do.call(rbind,lapply(snplists,scan)) or something
+   # I think it'd be about the same number of lines of code either way, so I'm not as cool as I thought :'(
+   # It would also mean you could skip re-execution of bgenix etc. if the files already exist.
+
+ids_found <- scan(ids_found_file, what=character())
+ids_not_found <- setdiff(score_dt$id, ids_found)
+
+if(length(ids_found)==0) stop("No IDs from score_file were found in geno_files! This is probably an ID format mismatch issue, e.g. rsID vs. chr:pos ID, etc..") # TODO print out a couple Ids from each file.
+
+if(is.null(args$ldlink_token)) { message("\x1b[31m No LDlink API token provided\x1b[m, so no proxies will be gotten for missing variants. (You had ",length(ids_not_found)," out of ",nrow(score_dt)," missing variants)")
+} else {
+  print("hi")
+}
+list_pop()
 ####TODO Is now the time to check if the id format is the same between the geno_files and the score_file? Or wait until later?
 ##### Do now, b/c o/w will attempt to find proxies for all variants b/c they're all supposedly missing (even though it's just an ID format issue)
+
 
 
 
@@ -119,14 +188,9 @@ score_file_path_simple <- file.path(args$scratch_dir,"score_file-formatted_for_p
 fwrite(score_dt_simple, score_file_path_simple, sep=' ')
 
 # Extract full genotype data for the variants in the --score_file.  
-# Why not use PLINK to read all formats? Because it cannot make use of .bgi (bgen) or .csi (vcf/bcf) index files. Instead it would try to convert everything to plink2 format first, (very slow for huge datasets).
 geno_subset_file_paths <- paste0(args$scratch_dir,"/",basename(args$score_file),"-",basename(args$geno_files))
-ranges_file <- file.path(args$scratch_dir,"variant_ranges.txt")
-ids_file    <- file.path(args$scratch_dir,"variant_ids.txt"   )
-writeLines(score_dt$id, ids_file)
-writeLines(score_dt[,paste0(chr,"\t",pos)], ranges_file)
 
-geno_extraction_cmds <- mcmapply(args$geno_files, geno_subset_file_paths, FUN=\(gf,sgf) {
+geno_extraction_cmds <- mapply(args$geno_files, geno_subset_file_paths, FUN=\(gf,sgf) {
   if(geno_files_type=="bgen") paste0(
     "bgenix -g ", gf,
     #" -incl-range ", ranges_file, # Purposefully commented out. bgenix extracts the _union_ of -incl-range and -incl-rsids. This can lead to variants we don't want which are at the same position as the desired variants. Doesn't help speed because bgen files are already indexed by ID, not only chr+pos. 
@@ -137,7 +201,7 @@ geno_extraction_cmds <- mcmapply(args$geno_files, geno_subset_file_paths, FUN=\(
     "bcftools view ", gf,
     " -R ", ranges_file, # Need to filter by ranges otherwise will be very slow, because VCF/BCF files are only indexed by chr+pos, not ID. Unlike bgenix, -R combined with a -i filter will take the intersection of variants.
     " -i'ID=@",ids_file,"'",
-    " -Ob ", # Output compressed BCF format
+    " -Ob", # Output compressed BCF format
     " > ", sgf
   )
   else if(geno_files_type=="plink1") paste0(
