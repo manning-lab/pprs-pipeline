@@ -3,9 +3,9 @@
 pwd | grep -q "tool$" || { echo "Please run this script from the tool/ folder."; exit 1; }
 
 install_bgenix() {
-   echo "Getting bgenix..."
+  echo "Getting bgenix... (this takes a long time to compile)"
    if [ -d "bgen.tgz" ]; then
-     rm -r bgen.tgz
+     rm -r bgen.tgz # In case user got impatient and leaves a half-untarred directory
    fi
    curl -LO http://code.enkre.net/bgen/tarball/release/bgen.tgz
    tar zxf bgen.tgz
