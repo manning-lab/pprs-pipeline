@@ -2,3 +2,5 @@ old/
 data/
 scratch/
 *.tbi
+tool/*
+!tool/get_tools.sh
