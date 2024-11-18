@@ -206,86 +206,90 @@ if(length(ids_found)==0) { unlink(found_id_fnms); stop("No IDs from score_file w
 message(length(ids_not_found),"/",nrow(score_dt)," variant IDs in score file which were not found in genotype file.")
 
 # Find proxies for score file variants mising from the genotype data
-old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
-## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
-proxy_output_fnm <- paste0("proxy-",basename(args$score_file),"-",args$ldlink_pop,"-",digest::digest(c(ids_not_found,args$ldlink_pop)),".txt")
-if(!file.exists(proxy_output_fnm)) {
-  LDproxy_batch(ids_not_found_chrpos, pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
-  file.rename(paste0("combined_query_snp_list_",args$ldlink_genome,".txt"), proxy_output_fnm)
-}
-proxy_dt <- suppressWarnings(fread(proxy_output_fnm))
-setwd(old_wd)
+if(!is.null(args$ldlink_token)) {
 
-proxy_dt <- proxy_dt[
-    R2 > args$ldlink_r2
-  ][!grepl("-",Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
-  ][Distance != 0
-
-  # Rm unneeded cols
-  ][, `:=`(V1=NULL, MAF=NULL, Dprime=NULL, FORGEdb=NULL, RegulomeDB=NULL, Function=NULL)
-
-  ][, chr := sub(":.*","",Coord)
-  ][, pos := sub(".*:","",Coord)
-  ][, ref := sub("\\(","",tstrsplit(Alleles,"/")[[1]])
-  ][, alt := sub("\\)","",tstrsplit(Alleles,"/")[[2]])
-  ][, chr_n := sub("^chr","",chr)
-
-  # Figure out which allele of the proxy corresponds to the effect allele of the original variant
-  ][, id_from_score_file := sapply(query_snp, \(query_chrpos) ids_not_found[which(ids_not_found_chrpos==query_chrpos)])
-  ][, ea_from_score_file := sapply(id_from_score_file, \(id2) score_dt[id==id2, ea])
-  ][, ea := mapply(Correlated_Alleles, ea_from_score_file, FUN = \(as, s_ea) {
-              as <- strsplit(as, ",|=")[[1]] # "A=C,T=G" -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
-              if(as[1]==s_ea) as[2] else as[4]
-            })
-  # TODO ^ ea code mega ugly surely more elgant way
-
-  # Instead of detecting the format of the user input IDs in the score file, just throw every possible ID format at the wall, simpler.
-  ][,       rs_id  := RS_Number
-  ][,     `c:p_id` := paste0(chr,  ':',pos)
-  ][, `c:p:r:a_id` := paste0(chr,  ':',pos,':',ref,':',alt)
-  ][, `c:p_r_a_id` := paste0(chr,  ':',pos,'_',ref,'_',alt)
-  ][,     `n:p_id` := paste0(chr_n,':',pos)
-  ][, `n:p:r:a_id` := paste0(chr_n,':',pos,':',ref,':',alt)
-  ][, `n:p_r_a_id` := paste0(chr_n,':',pos,'_',ref,'_',alt)
-  ]
-
-writeLines(proxy_dt[,paste0(chr,"\t",pos)], filter_ranges_fnm)
-writeLines(unlist(proxy_dt[,.SD,.SDcols=patterns("_id")]), filter_ids_fnm)
-
-proxy_found_id_fnms <- paste0(args$scratch_folder,"/",basename(proxy_output_fnm),"-",basename(args$geno_files),".snplist")
-proxy_id_extraction_cmds <- mapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, proxy_found_id_fnms, FUN=generate_id_extraction_cmd)
-
-if(!all(file.exists(proxy_found_id_fnms))) invisible(mclapply(proxy_id_extraction_cmds, system, ignore.stderr=T, mc.cores=args$threads))
-
-proxy_ids_found <- sapply(proxy_found_id_fnms, scan, what=character(), quiet=T) |> unlist()
-
-if(length(proxy_ids_found)==0) { stop("Unfortunately none of the proxies were found in geno_files! Continuing without them.")
-} else { # Update score_dt with proxies
-  where_matched_id <- Reduce('|', lapply(proxy_ids_found,'==',proxy_dt))
+  old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
+  ## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
+  proxy_output_fnm <- paste0("proxy-",basename(args$score_file),"-",args$ldlink_pop,"-",digest::digest(c(ids_not_found,args$ldlink_pop)),".txt")
+  if(!file.exists(proxy_output_fnm)) {
+    LDproxy_batch(ids_not_found_chrpos, pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
+    file.rename(paste0("combined_query_snp_list_",args$ldlink_genome,".txt"), proxy_output_fnm)
+  }
+  proxy_dt <- suppressWarnings(fread(proxy_output_fnm))
+  setwd(old_wd)
   
-  proxy_dt$replacement_id <- ""
-  invisible(mapply( # Will use the IDs that matched in the geno file to replace IDs in the score file of the variants that needed proxies.
-    row(proxy_dt)[where_matched_id],
-    col(proxy_dt)[where_matched_id],
-    FUN= \(r,c) set(proxy_dt, r,"replacement_id", proxy_dt[r,c,with=F])
-  ))
+  proxy_dt <- proxy_dt[
+      R2 > args$ldlink_r2
+    ][!grepl("-",Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
+    ][Distance != 0
   
-  proxy_dt <- proxy_dt[rowSums(where_matched_id)>0] # Only proxies found in the geno file
-  proxy_dt <- proxy_dt[proxy_dt[, .I[which.max(R2)], by=id_from_score_file]$V1] # Only the best-correlated proxy for each original variant
+    # Rm unneeded cols
+    ][, `:=`(V1=NULL, MAF=NULL, Dprime=NULL, FORGEdb=NULL, RegulomeDB=NULL, Function=NULL)
   
-  ids_no_proxy <- setdiff(ids_not_found, proxy_dt$id_from_score_file)
-  if(length(ids_no_proxy)>0) message("Could not find proxies for ",length(ids_no_proxy),"/",length(ids_not_found)," variants which needed proxies:\n",paste(ids_no_proxy,collapse='\n'),"\nYou could try decreasing --ldlink_r2 or increasing --ldlink_winsize.\nContinuing without the proxyless variants.\n")
+    ][, chr := sub(":.*","",Coord)
+    ][, pos := sub(".*:","",Coord)
+    ][, ref := sub("\\(","",tstrsplit(Alleles,"/")[[1]])
+    ][, alt := sub("\\)","",tstrsplit(Alleles,"/")[[2]])
+    ][, chr_n := sub("^chr","",chr)
   
-  score_dt <- proxy_dt[score_dt, on=c(id_from_score_file="id")]
-  score_dt <- score_dt[
-    ][                      , id := id_from_score_file
-    ][!is.na(replacement_id), id := replacement_id
-    ][is.na(ea), ea := i.ea
-    ][is.na(pos), pos := i.pos
-    ][, chr := i.chr # TODO bug if proxy on different chr, but that never happens right?
-  ]
-  #score_dt[id!=id_from_score_file] # TMP: to ensure proxies look right
-}
+    # Figure out which allele of the proxy corresponds to the effect allele of the original variant
+    ][, id_from_score_file := sapply(query_snp, \(query_chrpos) ids_not_found[which(ids_not_found_chrpos==query_chrpos)])
+    ][, ea_from_score_file := sapply(id_from_score_file, \(id2) score_dt[id==id2, ea])
+    ][, ea := mapply(Correlated_Alleles, ea_from_score_file, FUN = \(as, s_ea) {
+                as <- strsplit(as, ",|=")[[1]] # "A=C,T=G" -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
+                if(as[1]==s_ea) as[2] else as[4]
+              })
+    # TODO ^ ea code mega ugly surely more elgant way
+  
+    # Instead of detecting the format of the user input IDs in the score file, just throw every possible ID format at the wall, simpler.
+    ][,       rs_id  := RS_Number
+    ][,     `c:p_id` := paste0(chr,  ':',pos)
+    ][, `c:p:r:a_id` := paste0(chr,  ':',pos,':',ref,':',alt)
+    ][, `c:p_r_a_id` := paste0(chr,  ':',pos,'_',ref,'_',alt)
+    ][,     `n:p_id` := paste0(chr_n,':',pos)
+    ][, `n:p:r:a_id` := paste0(chr_n,':',pos,':',ref,':',alt)
+    ][, `n:p_r_a_id` := paste0(chr_n,':',pos,'_',ref,'_',alt)
+    ]
+  
+  writeLines(proxy_dt[,paste0(chr,"\t",pos)], filter_ranges_fnm)
+  writeLines(unlist(proxy_dt[,.SD,.SDcols=patterns("_id")]), filter_ids_fnm)
+  
+  proxy_found_id_fnms <- paste0(args$scratch_folder,"/",basename(proxy_output_fnm),"-",basename(args$geno_files),".snplist")
+  proxy_id_extraction_cmds <- mapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, proxy_found_id_fnms, FUN=generate_id_extraction_cmd)
+  
+  if(!all(file.exists(proxy_found_id_fnms))) invisible(mclapply(proxy_id_extraction_cmds, system, ignore.stderr=T, mc.cores=args$threads))
+  
+  proxy_ids_found <- sapply(proxy_found_id_fnms, scan, what=character(), quiet=T) |> unlist()
+  
+  if(length(proxy_ids_found)==0) { stop("Unfortunately none of the proxies were found in geno_files! Continuing without them.")
+  } else { # Update score_dt with proxies
+    where_matched_id <- Reduce('|', lapply(proxy_ids_found,'==',proxy_dt))
+    
+    proxy_dt$replacement_id <- ""
+    invisible(mapply( # Will use the IDs that matched in the geno file to replace IDs in the score file of the variants that needed proxies.
+      row(proxy_dt)[where_matched_id],
+      col(proxy_dt)[where_matched_id],
+      FUN= \(r,c) set(proxy_dt, r,"replacement_id", proxy_dt[r,c,with=F])
+    ))
+    
+    proxy_dt <- proxy_dt[rowSums(where_matched_id)>0] # Only proxies found in the geno file
+    proxy_dt <- proxy_dt[proxy_dt[, .I[which.max(R2)], by=id_from_score_file]$V1] # Only the best-correlated proxy for each original variant
+    
+    ids_no_proxy <- setdiff(ids_not_found, proxy_dt$id_from_score_file)
+    if(length(ids_no_proxy)>0) message("Could not find proxies for ",length(ids_no_proxy),"/",length(ids_not_found)," variants which needed proxies:\n",paste(ids_no_proxy,collapse='\n'),"\nYou could try decreasing --ldlink_r2 or increasing --ldlink_winsize.\nContinuing without the proxyless variants.\n")
+    
+    score_dt <- proxy_dt[score_dt, on=c(id_from_score_file="id")]
+    score_dt <- score_dt[
+      ][                      , id := id_from_score_file
+      ][!is.na(replacement_id), id := replacement_id
+      ][is.na(ea), ea := i.ea
+      ][is.na(pos), pos := i.pos
+      ][, chr := i.chr # TODO bug if proxy on different chr, but that never happens right?
+    ]
+    #score_dt[id!=id_from_score_file] # TMP: to ensure proxies look right
+  }
+
+} # END if(!is.null(args$ldlink_token))
 
 score_dt_simple <- score_dt[, .SD, .SDcols=c("chr","pos","id","ea",score_weight_colnms) ]
 score_dt_simple_fnm <- file.path(args$scratch_folder,"score_file-formatted_for_plink.csv") # TODO better run-specific nm
