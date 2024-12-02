@@ -1,0 +1,13 @@
+To install all tools:
+  ./get_tools.sh
+
+To install plink2 only:
+  ./get_tools plink2
+To install bcftools only:
+  ./get_tools.sh bcftools
+To install bgenix only:
+  ./get_tools bgenix
+
+bgenix takes a while to install so if you don't need it I recommend skipping it.
+
+This script will NOT install things to your system, only in this folder. (pprs.R will still be able to detect the programs if you don't move it.)
