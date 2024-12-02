@@ -2,8 +2,8 @@ These score files were manually created using weights sourced from:
   + alzhimers: Broad Institute server /humgen/florezlab/users/ksmith/new_bNMF_analyses/alzheimers/UKBB_pPS/v11/score_info/
   + dicorpo2024: TODO (10.2337/dc21-1395)
   + suziki2024: TODO (10.1038/s41586-024-07019-6)
-  + The rest: from a file Magda gave me called "weights_genetic_clusters.xlsx" (also in this directory).
-    I manually annotated variants with chr,pos,rsID,ref,alt allele columns if they were missing.
+  + The rest: from a file Magda gave me called 'Pathway_PRS_weights.zip' (also in this directory).
+    I manually annotated variants necessary columns if they were missing.
     I am guessing the weights were gotten from the following publications:
     - udler2018: 10.1371/journal.pmed.1002654
     - kim2022: <TODO not sure>
