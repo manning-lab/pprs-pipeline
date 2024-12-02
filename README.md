@@ -3,19 +3,19 @@ Mac/Linux only.
 Rscript pprs.R "
   # (Required arguments)
   --geno_files <f1.bgen f2.bcf data/*.vcf>
+
   --score_file <my_cluster_weights.csv>
+  --score_file_chr_col <colname or index>
+  --score_file_pos_col <colname or index>
+  --score_file_id_col  <colname or index>
+  --score_file_ref_col <colname or index>
+  --score_file_alt_col <colname or index>
+  --score_file_ea_col  <colname or index>
 
   # (Optional arguments)
   --sample_file <my_bgen_samples.sample>
   --scratch_folder (default scratch/)
   --output_fnm (default "my_results.txt")
-
-  --score_file_chr_col <colname or index> (default 1)
-  --score_file_pos_col <colname or index> (defailt 2)
-  --score_file_id_col  <colname or index> (default 3)
-  --score_file_ref_col <colname or index> (default 4)
-  --score_file_alt_col <colname or index> (default 5)
-  --score_file_ea_col  <colname or index> (default 6)
 
   --ldlink-token <e.g. 7ad621fa1bd2>
   --ldlink-pop <population code like GBR>

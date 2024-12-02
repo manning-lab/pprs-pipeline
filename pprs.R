@@ -7,12 +7,6 @@ library(XML)
 # Default arguments
 args <- list()
 args$scratch_folder <- "scratch"
-args$score_file_chr_col <- 1
-args$score_file_pos_col <- 2
-args$score_file_id_col  <- 3
-args$score_file_ref_col <- 4
-args$score_file_alt_col <- 5
-args$score_file_ea_col  <- 6
 args$ldlink_winsize <- 100000
 args$ldlink_genome <- "grch38_high_coverage"
 args$ldlink_pop <- "no --ldlink_pop argument provided!"
@@ -34,8 +28,14 @@ recognized_args <- c("geno_files","sample_file","score_file","fill_vcf_ids_with"
 if(any(names(args) %ni% recognized_args)) stop("Unrecognized argument(s):", paste0(" --",setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
-if(is.null(args$geno_files)) stop("--geno_files is required!")
-if(is.null(args$score_file)) stop("--score_file is required!")
+if(is.null(args$geno_files))         stop("--geno_files is required!\nThis may be .vcf[.gz]/.bcf[.gz], .bgen, .bed+.bim+.fam, or .pgen+.pvar+.psam file(s).")
+if(is.null(args$score_file))         stop("--score_file is required!")
+if(is.null(args$score_file_chr_col)) stop('--score_file_chr_col is required! This refers to the name or index of the chromosome column in your score file.\nThe chromosome format (e.g. "1" vs. "chr1") should match that in your --geno_files input.')
+if(is.null(args$score_file_pos_col)) stop("--score_file_pos_col is required! This refers to the name or index of the position column in your score file.")
+if(is.null(args$score_file_id_col )) stop('--score_file_id_col  is required! This refers to the name or index of the ID column in your score file.\nThe ID format (e.g. "rs1234" vs. "1:1234" vs. "chr1:1234:A:G" etc.) should match that of your --geno_files input.')
+if(is.null(args$score_file_ref_col)) stop("--score_file_ref_col is required! This refers to the name or index of the reference allele column in your score file.")
+if(is.null(args$score_file_alt_col)) stop("--score_file_alt_col is required! This refers to the name or index of the alternate allele column in your score file.")
+if(is.null(args$score_file_ea_col )) stop("--score_file_ea_col  is required! This refers to the name or index of the effect allele column in your score file.")
 
 ## Resolve patterns to actual files (e.g. *.bgen -> chr1.bgen, chr2.bgen)
 ### Resolve pattern over URL
