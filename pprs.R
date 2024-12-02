@@ -24,27 +24,26 @@ for(piece in pieces) { parts <- unlist(tstrsplit(piece," |=")); args[[parts[[1]]
 args <- lapply(args, \(x) x[x!=""])
 
 # --- Input validation ---
-recognized_args <- c("geno_files","sample_file","score_file","fill_vcf_ids_with","ldlink_token","ldlink_pop","ldlink_r2","ldlink_genome","ldlink_winsize","scratch_folder","threads","output_fnm","bcftools_exe","bgenix_exe","plink2_exe", paste0("score_file_",c("chr","pos","id","ref","alt","ea"),"_col"))
+recognized_args <- c("geno_files","sample_file","score_file","fill_vcf_ids_with","ldlink_token","ldlink_pop","ldlink_r2","ldlink_genome","ldlink_winsize","scratch_folder","threads","output_fnm","bcftools_exe","bgenix_exe","plink2_exe", paste0("score_file_",c("chr","pos","id","ref","alt","ea"),"_col"), "score_file_weight_cols")
 if(any(names(args) %ni% recognized_args)) stop("Unrecognized argument(s):", paste0(" --",setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
-if(is.null(args$geno_files))         stop("--geno_files is required!\nThis may be .vcf[.gz]/.bcf[.gz], .bgen, .bed+.bim+.fam, or .pgen+.pvar+.psam file(s).")
-if(is.null(args$score_file))         stop("--score_file is required!")
-if(is.null(args$score_file_chr_col)) stop('--score_file_chr_col is required! This refers to the name or index of the chromosome column in your score file.\nThe chromosome format (e.g. "1" vs. "chr1") should match that in your --geno_files input.')
-if(is.null(args$score_file_pos_col)) stop("--score_file_pos_col is required! This refers to the name or index of the position column in your score file.")
-if(is.null(args$score_file_id_col )) stop('--score_file_id_col  is required! This refers to the name or index of the ID column in your score file.\nThe ID format (e.g. "rs1234" vs. "1:1234" vs. "chr1:1234:A:G" etc.) should match that of your --geno_files input.')
-if(is.null(args$score_file_ref_col)) stop("--score_file_ref_col is required! This refers to the name or index of the reference allele column in your score file.")
-if(is.null(args$score_file_alt_col)) stop("--score_file_alt_col is required! This refers to the name or index of the alternate allele column in your score file.")
-if(is.null(args$score_file_ea_col )) stop("--score_file_ea_col  is required! This refers to the name or index of the effect allele column in your score file.")
+if(is.null(args$geno_files            )) stop("--geno_files is required!\nThis may be .vcf[.gz]/.bcf[.gz], .bgen, .bed+.bim+.fam, or .pgen+.pvar+.psam file(s).")
+if(is.null(args$score_file            )) stop("--score_file is required!")
+if(is.null(args$score_file_chr_col    )) stop('--score_file_chr_col is required! This refers to the name or index of the chromosome column in your score file.\nThe chromosome format (e.g. "1" vs. "chr1") should match that in your --geno_files input.')
+if(is.null(args$score_file_pos_col    )) stop("--score_file_pos_col is required! This refers to the name or index of the position column in your score file.")
+if(is.null(args$score_file_id_col     )) stop('--score_file_id_col  is required! This refers to the name or index of the ID column in your score file.\nThe ID format (e.g. "rs1234" vs. "1:1234" vs. "chr1:1234:A:G" etc.) should match that of your --geno_files input.')
+if(is.null(args$score_file_ref_col    )) stop("--score_file_ref_col is required! This refers to the name or index of the reference allele column in your score file.")
+if(is.null(args$score_file_alt_col    )) stop("--score_file_alt_col is required! This refers to the name or index of the alternate allele column in your score file.")
+if(is.null(args$score_file_ea_col     )) stop("--score_file_ea_col  is required! This refers to the name or index of the effect allele column in your score file.")
+if(is.null(args$score_file_weight_cols)) stop("--score_file_weight_cols  is required! This refers to the name(s) or index(es) of the weights column(s) in your score file.")
 
 ## Resolve patterns to actual files (e.g. *.bgen -> chr1.bgen, chr2.bgen)
 ### Resolve pattern over URL
-if( all(grepl("^https://", args$geno_files)) &
-    any(grepl("\\*",       args$geno_files)) ) stop("Using a pattern with https:// URLs is not supported. Manually specifying all the URLS without using a pattern WILL still work. But first try editing your URL pattern to use http:// instead of https://, that usually still works.")
-if(!all(grepl("://",       args$geno_files)) &
-    any(grepl("://",       args$geno_files)) ) stop("Cannot use both local genotype files and genotype files over URL") # Technically could but complicates code a bit
-if( all(grepl("://",       args$geno_files)) &
-    any(grepl("\\*",       args$geno_files)) ) { message("Detected a pattern of URLs. Scraping the site for links to the files...")
+if( all(grepl("^https://", args$geno_files)) & any(grepl("\\*", args$geno_files)) ) stop("Using a pattern with https:// URLs is not supported. Manually specifying all the URLS without using a pattern WILL still work. But first try editing your URL pattern to use http:// instead of https://, that usually still works.")
+if(!all(grepl(      "://", args$geno_files)) & any(grepl("://", args$geno_files)) ) stop("Cannot use both local genotype files and genotype files over URL") # Technically could but complicates code a bit
+if( all(grepl(      "://", args$geno_files)) & any(grepl("\\*", args$geno_files)) ) {
+  message("Detected a pattern of URLs. Scraping the site for links to the files...")
   args$geno_files <-
     htmlParse(dirname(args$geno_files)) |> # Scrape HTML
     xpathSApply("//a/@href") |> # Get only hrefs
@@ -54,15 +53,13 @@ if( all(grepl("://",       args$geno_files)) &
   if(!all(grepl("bcf(.gz)?$|vcf(.gz)?$",args$geno_files))) stop("Only vcf[.gz]/bcf[.gz] files can be accessed over URL.")
 }
 ### Resolve patterns for local files
-if(!any(grepl("://",args$geno_files))) {
-  args$geno_files  <- list.files(dirname(args$geno_files ), pattern=paste(collapse='|',basename(args$geno_files )), full.names=T)
-}
-args$score_file    <- list.files(dirname(args$score_file ), pattern=paste(collapse='|',basename(args$score_file )), full.names=T)
-if(!is.null(args$sample_file)) {
-  args$sample_file <- list.files(dirname(args$sample_file), pattern=paste(collapse='|',basename(args$sample_file)), full.names=T)
-}
+                                         args$score_file  <- list.files(dirname(args$score_file),  pattern=paste(collapse='|',basename(args$score_file )), full.names=T)
+if(!any(grepl("://",args$geno_files))) { args$geno_files  <- list.files(dirname(args$geno_files),  pattern=paste(collapse='|',basename(args$geno_files )), full.names=T) }
+if(!is.null(args$sample_file))         { args$sample_file <- list.files(dirname(args$sample_file), pattern=paste(collapse='|',basename(args$sample_file)), full.names=T) }
 
-if(any(lengths(args[names(args)!="geno_files"]) > 1)) stop("Only one parameter is allowed for each argument, except for --geno_files.")
+arg_lengths <- lengths(args)[names(args) %ni% c('geno_files','score_file_weight_cols')]
+args_too_long <- names(arg_lengths)[arg_lengths>1]
+if(length(args_too_long)>0) stop("Only one parameter is allowed for each argument, except for --geno_files and --score_file_weight_cols\n", paste(args_too_long,collapse=' and '), ' have too many arguments!')
 if(length(args$geno_files)==0) stop("Provided --geno_files do not exist!  \n(If you're submitting a job on a compute cluster, you may need to specify absolute file paths.)")
 if(length(args$score_file)==0) stop("Provided --score_file does not exist!\n(If you're submitting a job on a compute cluster, you may need to specify absolute file paths.)")
 
@@ -87,29 +84,32 @@ if(all(grepl("bgen$|bgi$",args$geno_files))) {
 } else { stop(paste(c("Input geno_files format is unsupported, or is a mix of different formats. Below is the list of detected geno_files:",args$geno_files),collapse='\n')) }
 message("Detected ",geno_files_type," files:\n    ", paste(args$geno_files,collapse="\n    "), "\n")
 
-if(geno_files_type %in% c("bcf","vcf") && !file.exists(args$bcftools_exe)) stop("Wasn't able to find bcftools executable.")
-if(geno_files_type  ==       "bgen"    && !file.exists(args$bgenix_exe)  ) stop("Wasn't able to find bgenix   executable.")
-if(                                       !file.exists(args$plink2_exe)  ) stop("Wasn't able to find plink2   executable.")
+if(geno_files_type %in% c("bcf","vcf") && !file.exists(args$bcftools_exe)) stop("Wasn't able to find bcftools executable, required because you input bcf/vcf --geno_files.\n Please provide a path to --bcftools_exe, or, convert the files to another format using PLINK and use those instead.")
+if(geno_files_type  ==       "bgen"    && !file.exists(args$bgenix_exe)  ) stop("Wasn't able to find bgenix   executable, required because you input bgen --geno_files.\n Please provide a path to --bgenix_exe, or, convert the files to another format using PLINK and use those instead.")
+if(                                       !file.exists(args$plink2_exe)  ) stop("Wasn't able to find plink2   executable. Please provide a path to --plink2_exe.")
 
 ## Make sure --score_file's format is correct.
 score_dt <- fread(args$score_file)
-score_cols <- list(chr=args$score_file_chr_col,
-                   pos=args$score_file_pos_col,
-                   id =args$score_file_id_col,
-                   ref=args$score_file_ref_col,
-                   alt=args$score_file_alt_col,
-                   ea =args$score_file_ea_col)
+score_col_specs <- list(chr=args$score_file_chr_col,
+                        pos=args$score_file_pos_col,
+                        id =args$score_file_id_col,
+                        ref=args$score_file_ref_col,
+                        alt=args$score_file_alt_col,
+                        ea =args$score_file_ea_col,
+                        weights=args$score_file_weight_cols) |> unlist()
 
-score_col_idxs <- sapply( score_cols, \(col) if(grepl("[0-9]+",col)) as.numeric(col) else which(names(score_dt)==col) )
+score_col_idxs <- sapply( score_col_specs, \(col) if(grepl("^[0-9]+$",col)) as.numeric(col) else which(names(score_dt) == col) )
 
 score_col_farthest <- max(unlist(score_col_idxs))
-score_cols_not_found <- score_cols[lengths(score_col_idxs )==0]
 if(score_col_farthest  > ncol(score_dt)) stop("There are fewer than ",score_col_farthest," columns in the score file!")
-if(length(score_cols_not_found)>0      ) stop("Some columns were not found in the score file! These columns were: ", paste(collapse=' ',score_cols_not_found))
 
-message(paste0("Using score file's \"",names(score_dt)[score_col_idxs],"\" column as ",names(score_cols),"\n"), "\n\x1b[36mMake sure the correct score file columns were selected!!\x1b[m\n")
+score_col_specs_not_found <- score_col_specs[lengths(score_col_idxs)==0]
+if(length(score_col_specs_not_found)>0) stop("Some columns were not found in the score file! These columns were: ", paste(collapse=' ',score_col_specs_not_found))
 
-score_dt <- fread(args$score_file) |> setnames(old=score_col_idxs, new=names(score_cols))
+score_og_weight_nms <- names(score_dt)[score_col_idxs[grepl('weights',names(score_col_idxs))]]
+message(paste0("Using score file's \"",names(score_dt)[score_col_idxs],"\" column as ",names(score_col_specs),"\n"), "\n\x1b[36mMake sure the correct score file columns were selected!!\x1b[m\n")
+
+score_dt <- fread(args$score_file) |> setnames(old=score_col_idxs, new=names(score_col_specs))
 
 if(score_dt[, !is.integer(chr) & !is.character(chr)]) message("Warning: score file's chromosome column is not character or integer type which is suspicious. Here is a sample: ",        paste(head(score_dt$chr),collapse=' '))
 if(score_dt[, !is.integer(pos)                     ]) message("Warning: score file's position column is not integer type which is suspicious. Here is a sample: ",                       paste(head(score_dt$pos),collapse=' '))
@@ -118,9 +118,7 @@ if(score_dt[, any(grepl("[^ATCGNatcgn]", alt))     ]) message("Warning: score fi
 if(score_dt[, any(grepl("[^ATCGNatcgn]", ea ))     ]) message("Warning: score file's effect allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ",    paste(head(score_dt$ea ),collapse=' '))
 if(score_dt[,!any(grepl("[0-9]",         id ))     ]) message("Warning: score file's id column has no numbers in it, which is suspicious, here is a sample: ",                           paste(head(score_dt$id ),collapse=' ')) 
 if(score_dt[,              anyDuplicated(id)>0     ]) stop("Found duplicated IDs in the score file! Please merge the duplicates.") # TODO suggest data.table by= or tibble group_by code maybe
-
-score_weight_colnms <- names(score_dt)[(score_col_farthest+1):ncol(score_dt)]
-message('Using score file weight columns:\n    "',paste(score_weight_colnms,collapse='"\n    "'),'"\n')
+if(score_dt[,!all(sapply(.SD,is.numeric)), .SDcols=patterns('weights')]) stop('Score file weights columns do not contain all-numeric values! Here is a sample:\n', paste(collapse='\n',capture.output(score_dt[,.SD,.SDcols=patterns('weights')])))
 
 ## LDlink inputs
 if(is.null(args$ldlink_token)) {
@@ -249,10 +247,10 @@ if(!is.null(args$ldlink_token)) {
     ][,     `n:p_id` := paste0(chr_n,':',pos)
     ][, `n:p:r:a_id` := paste0(chr_n,':',pos,':',ref,':',alt)
     ][, `n:p_r_a_id` := paste0(chr_n,':',pos,'_',ref,'_',alt)
-    ]
-  
-  writeLines(proxy_dt[,paste0(chr,"\t",pos)], filter_ranges_fnm)
+  ]
+
   writeLines(unlist(proxy_dt[,.SD,.SDcols=patterns("_id")]), filter_ids_fnm)
+  writeLines(       proxy_dt[,paste0(chr,"\t",pos)],         filter_ranges_fnm)
   
   proxy_found_id_fnms <- paste0(args$scratch_folder,"/",basename(proxy_output_fnm),"-",basename(args$geno_files),".snplist")
   proxy_id_extraction_cmds <- mapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, proxy_found_id_fnms, FUN=generate_id_extraction_cmd)
@@ -261,7 +259,7 @@ if(!is.null(args$ldlink_token)) {
   
   proxy_ids_found <- sapply(proxy_found_id_fnms, scan, what=character(), quiet=T) |> unlist()
   
-  if(length(proxy_ids_found)==0) { stop("Unfortunately none of the proxies were found in geno_files! Continuing without them.")
+  if(length(proxy_ids_found)==0) { warning("Unfortunately \x1b[36mnone of the possible proxies were found in geno_files!\x1b[m Continuing without them.")
   } else { # Update score_dt with proxies
     where_matched_id <- Reduce('|', lapply(proxy_ids_found,'==',proxy_dt))
     
@@ -269,14 +267,14 @@ if(!is.null(args$ldlink_token)) {
     invisible(mapply( # Will use the IDs that matched in the geno file to replace IDs in the score file of the variants that needed proxies.
       row(proxy_dt)[where_matched_id],
       col(proxy_dt)[where_matched_id],
-      FUN= \(r,c) set(proxy_dt, r,"replacement_id", proxy_dt[r,c,with=F])
+      FUN= \(r,c) set(proxy_dt, r, "replacement_id", proxy_dt[r,c,with=F])
     ))
     
     proxy_dt <- proxy_dt[rowSums(where_matched_id)>0] # Only proxies found in the geno file
     proxy_dt <- proxy_dt[proxy_dt[, .I[which.max(R2)], by=id_from_score_file]$V1] # Only the best-correlated proxy for each original variant
     
     ids_no_proxy <- setdiff(ids_not_found, proxy_dt$id_from_score_file)
-    if(length(ids_no_proxy)>0) message("Could not find proxies for ",length(ids_no_proxy),"/",length(ids_not_found)," variants which needed proxies:\n",paste(ids_no_proxy,collapse='\n'),"\nYou could try decreasing --ldlink_r2 or increasing --ldlink_winsize.\nContinuing without the proxyless variants.\n")
+    if(length(ids_no_proxy)>0) message("\x1b[36mCould not find proxies for ",length(ids_no_proxy),"/",length(ids_not_found)," of the variants which needed proxies\x1b[m:\n",paste(ids_no_proxy,collapse='\n'),"\nTo make sure this variant isn't omitted, you could try decreasing --ldlink_r2 or increasing --ldlink_winsize.\nFor now, continuing without these proxyless variants.\n")
     
     score_dt <- proxy_dt[score_dt, on=c(id_from_score_file="id")]
     score_dt <- score_dt[
@@ -291,7 +289,8 @@ if(!is.null(args$ldlink_token)) {
 
 } # END if(!is.null(args$ldlink_token))
 
-score_dt_simple <- score_dt[, .SD, .SDcols=c("chr","pos","id","ea",score_weight_colnms) ]
+score_dt_simple <- score_dt[, cbind(chr,pos,id,ea,.SD), .SDcols=patterns('weights[0-9]+')]
+setnames(score_dt_simple, grep('weights[0-9]+',names(score_dt_simple), value=T), score_og_weight_nms) # TODO very messy way of restoring weight column nms
 score_dt_simple_fnm <- file.path(args$scratch_folder,"score_file-formatted_for_plink.csv") # TODO better run-specific nm
 fwrite(score_dt_simple, score_dt_simple_fnm, sep=' ')
 
@@ -299,7 +298,7 @@ fwrite(score_dt_simple, score_dt_simple_fnm, sep=' ')
 geno_subset_file_paths <- paste0(args$scratch_folder,"/",basename(args$score_file),"-",basename(args$geno_files))
 
 writeLines(score_dt_simple[,paste0(chr,"\t",pos)], filter_ranges_fnm)
-writeLines(score_dt_simple$id, filter_ids_fnm)
+writeLines(score_dt_simple$id,                     filter_ids_fnm)
 
 geno_extraction_cmds <- mapply(args$geno_files, geno_subset_file_paths, FUN=\(gf,sgf) {
   if(geno_files_type=="bgen") paste0(
@@ -337,11 +336,11 @@ if(!all(file.exists(geno_subset_file_paths))) { # Don't rerun this if the subset
   invisible(mclapply(geno_extraction_cmds,system, ignore.stderr=T, mc.cores=args$threads))
   unlink(paste0(basename(args$geno_files),".tbi")) # Clean up index files that bcftools pulls in
 }
-                                                                                             # v TODO v
-if(geno_files_type=="bgen")           plink_input_flags <- paste0("--bgen  ",geno_subset_file_paths," ref-unknown --sample ",args$sample_file)
-if(geno_files_type%in%c("bcf","vcf")) plink_input_flags <- paste0("--bcf   ",geno_subset_file_paths) # No matter what, the subset of genotype data we extract will be in BCF format.
-if(geno_files_type=="plink1")         plink_input_flags <- paste0("--bfile ",geno_subset_file_paths)
-if(geno_files_type=="plink2")         plink_input_flags <- paste0("--pfile ",geno_subset_file_paths)
+                                                                                                        # v TODO v: is there any way to be sure which is the reference alle in a user-provided .bgen?
+if(geno_files_type  ==       "bgen"   ) plink_input_flags <- paste0("--bgen  ",geno_subset_file_paths," ref-unknown --sample ",args$sample_file)
+if(geno_files_type %in% c("bcf","vcf")) plink_input_flags <- paste0("--bcf   ",geno_subset_file_paths) # No matter what, the subset of genotype data we extract will be in BCF format.
+if(geno_files_type  ==      "plink1"  ) plink_input_flags <- paste0("--bfile ",geno_subset_file_paths)
+if(geno_files_type  ==      "plink2"  ) plink_input_flags <- paste0("--pfile ",geno_subset_file_paths)
 stopifnot(!is.null(plink_input_flags))
 plink_output_flags <- paste0("--allow-misleading-out-arg --out ", geno_subset_file_paths)
 # PRS result files will be "<scratch_folder>/<score_filename>-<geno_filename>.sscore

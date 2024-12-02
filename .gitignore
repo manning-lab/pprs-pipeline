@@ -5,3 +5,4 @@ scratch/
 tool/*
 !tool/get_tools.sh
 !tool/README
+examples/*.txt

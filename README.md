@@ -11,6 +11,7 @@ Rscript pprs.R "
   --score_file_ref_col <colname or index>
   --score_file_alt_col <colname or index>
   --score_file_ea_col  <colname or index>
+  --score_file_weight_cols <colname(s) or index(es)>
 
   # (Optional arguments)
   --sample_file <my_bgen_samples.sample>
@@ -40,7 +41,6 @@ Rscript pprs.R "
   - `--sample_file`: an accompanying [`.sample`](https://www.cog-genomics.org/plink/2.0/formats#sample) file is required if using `.bgen` file(s).
 + **`--score_file`** Must contain columns for chromosome, position, variant IDs, reference allele, alternate allele, effect allele, and at least one column of weights.
   - No duplicate IDs allowed.
-  - `--score_file_chr/pos/id/ref/alt/ea_col`: all columns past the farthest-right column are considered to be weights columns.
 + `--ldlink-token`: (TL;DR, get a token by registering [here](https://ldlink.nih.gov/?tab=apiaccess)). [LDlink](https://ldlink.nih.gov) is a collection of tools to interrrogate LD in various population groups. One tool is [LDproxy](https://ldlink.nih.gov/?tab=ldproxy), which this pipeline uses via the `LDlinkR` package. It's used to find other variants that are highly-correlated with the variants in your score file so that if one isn't found in your genotype file, a highly correlated proxy can be used instead. A secret token is required to use these tools programmatically as they are here, to limit bad actors from overloading the servers. You can [obtain a token for yourself by registering here](https://ldlink.nih.gov/?tab=apiaccess). It should be a random sequence about 12 numbers/letters long.
   - If no token is provided, the pipeline will proceed without finding proxies, and will drop missing variants.
   - `--ldlink-pop`: One or more population codes. See below. LD will be calculated from the pool of these population groups. Note that the more populations you select, the longer it will take to find proxies.

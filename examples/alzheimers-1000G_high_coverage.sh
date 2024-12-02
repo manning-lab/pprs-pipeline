@@ -11,6 +11,7 @@ Rscript ../pprs.R "
   --score_file_ref_col Ref
   --score_file_alt_col Alt
   --score_file_ea_col Effect_Allele
+  --score_file_weight_cols 10 Total_GRS 12 13 14 15 11
 
   --output_fnm alzheimers-1000G_high_coverage.txt
 "
