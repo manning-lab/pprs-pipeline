@@ -2,6 +2,7 @@ library(data.table)
 library(LDlinkR)
 library(parallel)
 library(XML)
+#library(SeqArray)
 "%ni%" <- Negate("%in%")
 
 # Default arguments
@@ -70,7 +71,7 @@ if(all(grepl("bgen$|bgi$",args$geno_files))) {
   # TODO would be good to detect index files and warn if not found
   args$geno_files <- args$geno_files[!grepl("bgi$",args$geno_files)] # Don't include index files
   geno_files_type <-"bgen" 
-} else if(all(grepl("bcf(.gz)?$|vcf(.gz)?$",args$geno_files))) {
+} else if(all(grepl("bcf(.gz)?$|vcf(.gz)?$|tbi$|csi$",args$geno_files))) {
   # TODO would be good to detect index files and warn if not found
   if(all(grepl("bcf(.gz)?$|tbi$|csi$",args$geno_files))) geno_files_type <- "bcf"
   if(all(grepl("vcf(.gz)?$|tbi$|csi$",args$geno_files))) geno_files_type <- "vcf"
@@ -99,6 +100,7 @@ score_col_specs <- list(chr=args$score_file_chr_col,
                         weights=args$score_file_weight_cols) |> unlist()
 
 score_col_idxs <- sapply( score_col_specs, \(col) if(grepl("^[0-9]+$",col)) as.numeric(col) else which(names(score_dt) == col) )
+# TODO error if the same column is used twice. Separate ref/alt/ea cols should be enforced.
 
 score_col_farthest <- max(unlist(score_col_idxs))
 if(score_col_farthest  > ncol(score_dt)) stop("There are fewer than ",score_col_farthest," columns in the score file!")
@@ -200,11 +202,11 @@ ids_found <- sapply(found_id_fnms, scan, what=character(), quiet=T) |> unlist()
 ids_not_found <- setdiff(score_dt$id, ids_found)
 ids_not_found_chrpos <- score_dt[id %in% ids_not_found, paste0("chr",chr,":",pos)] |> sub(pattern="chrchr",replacement="chr") # LDproxy only takes rsIDs or chr:pos IDs
 
-if(length(ids_found)==0) { unlink(found_id_fnms); stop("No IDs from score_file were found in geno_files! This is probably an ID format mismatch issue, e.g. rsID vs. chr:pos ID, etc.. Or, maybe your geno_files are VCFs without IDs (like 1000G files), and you forgot to specify --fill_vcf_ids_with?") } # TODO print out a couple Ids from each file.
-message(length(ids_not_found),"/",nrow(score_dt)," variant IDs in score file which were not found in genotype file.")
+if(length(ids_found)==0) { unlink(found_id_fnms); stop('No IDs from score_file were found in geno_files! This is probably a chromosome or ID format mismatch issue, e.g. "1" vs. "chr1", or rsID vs. chr:pos ID, etc.. Or, maybe your geno_files are VCFs without IDs (like 1000G files), and you forgot to specify --fill_vcf_ids_with?') } # TODO print out a couple Ids from each file.
+message(length(ids_not_found),"/",nrow(score_dt)," variant IDs in score file not found in genotype file(s).")
 
 # Find proxies for score file variants mising from the genotype data
-if(!is.null(args$ldlink_token)) {
+if(!is.null(args$ldlink_token) & length(ids_not_found)>0) {
 
   old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
   ## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
