@@ -89,7 +89,11 @@ message('Detected ',geno_files_type,' files:\n    ', paste(args$geno_files,colla
 if(geno_files_type %in% c('bcf','vcf') && !file.exists(args$bcftools_exe)) stop('Wasn\'t able to find bcftools executable, required because you input bcf/vcf --geno_files.\n Please provide a path to --bcftools_exe, or, convert the files to another format using PLINK and use those instead.')
 if(geno_files_type  ==       'bgen'    && !file.exists(args$bgenix_exe)  ) stop('Wasn\'t able to find bgenix   executable, required because you input bgen --geno_files.\n Please provide a path to --bgenix_exe, or, convert the files to another format using PLINK and use those instead.')
 if(                                       !file.exists(args$plink2_exe)  ) stop('Wasn\'t able to find plink2   executable. Please provide a path to --plink2_exe.')
-if(!require(SeqArray)                                                    ) stop('Wasn\'t able to find SeqArray R package, required because you input gds --geno_files. Please install it as follows: if(!require("BiocManager")) install.packages("BiocManager"); BiocManager::install("SeqArray")') # Should not automatically install, force user to have an R version with it pre-installed. Otherwise user may cause big bottleneck installing the package every run.
+if(geno_files_type  ==       'gds'     && !require(SeqArray,quietly=T)   ) {
+  warning('Wasn\'t able to find SeqArray R package, required because you input gds --geno_files. Installing now.\n
+           If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an R environment with SeqArray pre-installed so that you don\'t waste time installing the package repeatedly.')
+  if(!require("BiocManager",quietly=T)) install.packages("BiocManager"); BiocManager::install("SeqArray",ask=F)
+}
 
 ## Make sure --score_file's format is correct.
 score_dt <- fread(args$score_file)
@@ -126,7 +130,7 @@ if(score_dt[,!all(sapply(.SD,is.numeric)), .SDcols=patterns('weights')]) stop('S
 
 ## LDlink inputs
 if(is.null(args$ldlink_token)) {
-  message('\x1b[31m No LDlink API token provided\x1b[m, so no proxies will be gotten for missing variants.')
+  message('\x1b[31mNo LDlink API token provided\x1b[m, so no proxies will be gotten for missing variants.')
 } else {
   invalid_pop_codes <- args$ldlink_pop[args$ldlink_pop %ni% list_pop()$pop_code]
   if(length(invalid_pop_codes)>0) {
@@ -267,7 +271,7 @@ if(!is.null(args$ldlink_token) & length(ids_not_found)>0) {
   
   proxy_found_id_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.snplist')
   
-  if(!all(file.exists(proxy_found_id_fnms))) invisible(mcmapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, proxy_found_id_fnms, FUN=id_extraction, mc.cores=args$threads)) # TODO TODO TODO test
+  if(!all(file.exists(proxy_found_id_fnms))) invisible(mcmapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, proxy_found_id_fnms, FUN=id_extraction, mc.cores=args$threads))
   
   proxy_ids_found <- sapply(proxy_found_id_fnms, scan, what=character(), quiet=T) |> unlist()
   
@@ -342,8 +346,8 @@ geno_extraction <- \(geno_file, geno_subset_file) {
     )
     else if(geno_files_type=='gds') {
       gds <- seqOpen(geno_file)
-      seqSetFilterPos(gds, score_dt$chr, score_dt$pos, score_dt$ref, score_dt$alt)
-      seqGDS2BED(gds, geno_subset_file, write.rsid='chr_pos_ref_alt') # PLINK2 cannot handle GDS files, so have to convert
+      seqSetFilterPos(gds, score_dt$chr, score_dt$pos, score_dt$ref, score_dt$alt, verbose=F)
+      seqGDS2BED(gds, geno_subset_file, write.rsid='chr_pos_ref_alt', verbose=F) # PLINK2 cannot handle GDS files, so have to convert
       system(paste0('awk \'{gsub(/_/,":"); print}\' ',geno_subset_file,'.bim > tmp && mv tmp ',geno_subset_file,'.bim')) # Why not sed -i 's/_/:/g'? sed -i syntax is different between Linux & Mac/BSD. TODO: figure out something better, this sucks
       seqClose(gds)
       ' '
@@ -381,6 +385,7 @@ plink_prs_cmds <- paste(
 )
 #message('\nRunning the following commands to calculate PRSes...:\n    ', paste(plink_prs_cmds,collapse='\n    '))
 
+message('Calculating PRSes...')
 err_codes <- mclapply(plink_prs_cmds,system, ignore.stdout=T,ignore.stderr=T, mc.cores=args$threads)
 
 if(any(err_codes!=0)) message('\nPLINK PRS calculation errors happened for some files. Check these logs:\n    ', paste0(geno_subset_file_paths[err_codes!=0],'.log',collapse='\n    '), '\n(A common "error" is that no variants were in the input file, but that may just be because you provided files for all chromosomes but your score file didn\'t have a variant in every chromosome. If so, this is not a concern.)')
@@ -393,5 +398,6 @@ prs_file_paths <- file.path(args$scratch_folder, prs_files)
 prs_sums <- rbindlist(lapply(prs_file_paths,fread))[, lapply(.SD, sum), by='#IID']
 
 fwrite(prs_sums, args$output_fnm)
+message('Done! PRS results file: ', args$output_fnm)
 
 # TODO: --q-score-range option useful for global PRS, see Kenny script for referene
