@@ -6,16 +6,16 @@ Rscript pprs.R "
 
   --score_file <my_cluster_weights.csv>
 
-  --score_file_chr_col     <colname    or index    >
-  --score_file_pos_col     <colname    or index    >
-  --score_file_id_col      <colname    or index    >
-  --score_file_ref_col     <colname    or index    >
-  --score_file_alt_col     <colname    or index    >
-  --score_file_ea_col      <colname    or index    >
-  --score_file_weight_cols <colname(s) or index(es)>
+  --score_file_chr_col     <colname>
+  --score_file_pos_col     <colname>
+  --score_file_id_col      <colname>
+  --score_file_ref_col     <colname>
+  --score_file_alt_col     <colname>
+  --score_file_ea_col      <colname>
+  --score_file_weight_cols <colname(s)>
 
   # (Optional arguments)
-  --sample_file <my_bgen_samples.sample>
+  --sample_file <my_bgen_samps.sample>
 
   --scratch_folder (default scratch/)
 

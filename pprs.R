@@ -138,27 +138,19 @@ if(                                       !file.exists(args$plink2_exe)  ) { mes
 
 ## Make sure --score_file's format is correct.
 score_dt <- fread(args$score_file)
-score_col_specs <- list(chr=args$score_file_chr_col,
-                        pos=args$score_file_pos_col,
-                        id =args$score_file_id_col,
-                        ref=args$score_file_ref_col,
-                        alt=args$score_file_alt_col,
-                        ea =args$score_file_ea_col,
-                        weights=args$score_file_weight_cols) |> unlist()
+score_colnms <- c(chr=args$score_file_chr_col,
+                  pos=args$score_file_pos_col,
+                  id =args$score_file_id_col,
+                  ref=args$score_file_ref_col,
+                  alt=args$score_file_alt_col,
+                  ea =args$score_file_ea_col,
+                  weights=args$score_file_weight_cols)
 
-score_col_idxs <- sapply( score_col_specs, \(col) if(grepl('^[0-9]+$',col)) as.numeric(col) else which(names(score_dt) == col) )
-# TODO error if the same column is used twice. Separate ref/alt/ea cols should be enforced.
+score_colnms_not_found <- score_colnms[score_colnms %ni% names(score_dt)]
+if(length(score_colnms_not_found)>0) stop('Some columns were not found in the score file! These columns were: ', paste(collapse=' ',score_colnms_not_found))
+message(paste0('Using score file\'s "',score_colnms,'" column as ',names(score_colnms),'\n'), '\n\x1b[36mMake sure the correct score file columns were selected!!\x1b[m\n')
 
-score_col_farthest <- max(unlist(score_col_idxs))
-if(score_col_farthest  > ncol(score_dt)) stop('There are fewer than ',score_col_farthest,' columns in the score file!')
-
-score_col_specs_not_found <- score_col_specs[lengths(score_col_idxs)==0]
-if(length(score_col_specs_not_found)>0) stop('Some columns were not found in the score file! These columns were: ', paste(collapse=' ',score_col_specs_not_found))
-
-score_og_weight_nms <- names(score_dt)[score_col_idxs[grepl('weights',names(score_col_idxs))]]
-message(paste0('Using score file\'s "',names(score_dt)[score_col_idxs],'" column as ',names(score_col_specs),'\n'), '\n\x1b[36mMake sure the correct score file columns were selected!!\x1b[m\n')
-
-score_dt <- fread(args$score_file) |> setnames(old=score_col_idxs, new=names(score_col_specs))
+score_dt <- fread(args$score_file) |> setnames(old=score_colnms, new=names(score_colnms))
 
 if(score_dt[, !is.integer(chr) & !is.character(chr)]) message('Warning: score file\'s chromosome column is not character or integer type which is suspicious. Here is a sample: ',        paste(head(score_dt$chr),collapse=' '))
 if(score_dt[, !is.integer(pos)                     ]) message('Warning: score file\'s position column is not integer type which is suspicious. Here is a sample: ',                       paste(head(score_dt$pos),collapse=' '))
@@ -347,7 +339,7 @@ if(!is.null(args$ldlink_token) & length(ids_not_found)>0) {
 } # END if(!is.null(args$ldlink_token))
 
 score_dt_simple <- score_dt[, cbind(chr,pos,id,ea,.SD), .SDcols=patterns('weights[0-9]+')]
-setnames(score_dt_simple, grep('weights[0-9]+',names(score_dt_simple), value=T), score_og_weight_nms) # TODO very messy way of restoring weight column nms
+setnames(score_dt_simple, grep('weights[0-9]+',names(score_dt_simple), value=T), score_colnms[grepl('weights',names(score_colnms))]) # TODO very messy way of restoring weight column nms
 score_dt_simple_fnm <- file.path(args$scratch_folder,'score_file-formatted_for_plink.csv') # TODO better run-specific nm
 fwrite(score_dt_simple, score_dt_simple_fnm, sep=' ')
 
