@@ -1,8 +1,54 @@
+deps <- c('data.table','LDlinkR','parallel','XML') 
+install.packages(deps[lengths(sapply(deps,find.package,quiet=T))==0], repos='https://cloud.r-project.org')
+
 library(data.table)
 library(LDlinkR)
 library(parallel)
 library(XML)
+
 '%ni%' <- Negate('%in%')
+
+get_bcftools <- \() {
+  message('Installing bcftools to ./bcftools...')
+  system('git clone --depth 1 --recurse-submodules https://github.com/samtools/htslib.git')
+  system('git clone --depth 1 https://github.com/samtools/bcftools.git')
+  system('cd bcftools && make -j')
+  system('cp ./bcftools/bcftools .')
+}
+get_bgenix <- \() {
+  message('Installing bgenix to ./bgenix... (this takes a long time)')
+  if(file.exists('bgen.tgz')) unlink('bgen.tgz') # In case user got impatient and leaves a half-untarred directory
+  system('curl -LO http://code.enkre.net/bgen/tarball/release/bgen.tgz')
+  system('tar zxf bgen.tgz')
+  system('mv bgen.tgz bgen') # Extracted directory retains .tgz in its name for some reason
+  system('cd bgen && ./waf configure && ./waf')
+  system('cp bgen/build/apps/bgenix .')
+}
+get_plink2 <- \() {
+  message('Installing plink2 to ./plink2...')
+  # FIXME: Windows and Mac don't actually have lscpu so this will break there. In the meantime Mac users can provide --thing_exe.
+  win   <- Sys.info()['sysname']=='Windows'
+  mac   <- Sys.info()['sysname']=='Darwin'
+  linux <- Sys.info()['sysname']=='Linux'
+  arm   <- Sys.info()['architecture']=='arm64'
+  intel <- system('lscpu | grep GenuineIntel', ignore.stdout=T)==0
+  amd   <- system('lscpu | grep AuthenticAMD', ignore.stdout=T)==0
+  avx2  <- system('lscpu | grep         avx2', ignore.stdout=T)==0
+
+  url <- if(win   &         avx2) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_win_avx2_20241222.zip'
+    else if(win                 ) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_win64_20241222.zip'
+    else if(mac   &         arm ) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_mac_arm64_20241222.zip'
+    else if(mac   &         avx2) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_mac_avx2_20241222.zip'
+    else if(mac                 ) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_mac_20241222.zip'
+    else if(linux & intel & avx2) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_avx2_20241222.zip'
+    else if(linux &  amd  & avx2) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_amd_avx2_20241222.zip'
+    else if(linux               ) 'https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_x86_64_20241222.zip'
+    else stop('PLINK2 installation failed; machine not supported.')
+
+  system(paste('curl -L', url, '-o plink2.zip && unzip -o plink2.zip && rm plink2.zip'))
+}
+get_seqarray <- \() { if(!require("BiocManager",quietly=T)) install.packages("BiocManager"); BiocManager::install("SeqArray",ask=F) }
+
 
 # Default arguments
 args <- list()
@@ -13,10 +59,9 @@ args$ldlink_pop <- 'no --ldlink_pop argument provided!'
 args$ldlink_r2 <- 0.8
 args$threads <- 1
 args$output_fnm <- 'my_results.txt'
-# TODO Gotta be a cleaner way to do this no?
-args$bcftools_exe <- if(file.exists('tool/bcftools/bcftools'))      'tool/bcftools/bcftools'      else if(file.exists('../tool/bcftools/bcftools'))      '../tool/bcftools/bcftools'      else Sys.which('bcftools')
-args$bgenix_exe   <- if(file.exists('tool/bgen/build/apps/bgenix')) 'tool/bgen/build/apps/bgenix' else if(file.exists('../tool/bgen/build/apps/bgenix')) '../tool/bgen/build/apps/bgenix' else Sys.which('bgenix')
-args$plink2_exe   <- if(file.exists('tool/plink2'))                 'tool/plink2'                 else if(file.exists('../tool/plink2'))                 '../tool/plink2'                 else Sys.which('plink2')
+args$bcftools_exe <- if(file.exists('./bcftools')) './bcftools' else Sys.which('bcftools')
+args$bgenix_exe   <- if(file.exists('./bgenix'  )) './bgenix'   else Sys.which('bgenix')
+args$plink2_exe   <- if(file.exists('./plink2'  )) './plink2'   else Sys.which('plink2')
 
 # Parse command-line args
 pieces <- tstrsplit(split='--', paste(gsub('\n','',commandArgs(T)), collapse=' '))[-1]
@@ -86,14 +131,10 @@ if(all(grepl('bgen$|bgi$',args$geno_files))) {
 } else { stop(paste(c('Input geno_files format is unsupported, or is a mix of different formats. Below is the list of detected geno_files:',args$geno_files),collapse='\n')) }
 message('Detected ',geno_files_type,' files:\n    ', paste(args$geno_files,collapse='\n    '), '\n')
 
-if(geno_files_type %in% c('bcf','vcf') && !file.exists(args$bcftools_exe)) stop('Wasn\'t able to find bcftools executable, required because you input bcf/vcf --geno_files.\n Please provide a path to --bcftools_exe, or, convert the files to another format using PLINK and use those instead.')
-if(geno_files_type  ==       'bgen'    && !file.exists(args$bgenix_exe)  ) stop('Wasn\'t able to find bgenix   executable, required because you input bgen --geno_files.\n Please provide a path to --bgenix_exe, or, convert the files to another format using PLINK and use those instead.')
-if(                                       !file.exists(args$plink2_exe)  ) stop('Wasn\'t able to find plink2   executable. Please provide a path to --plink2_exe.')
-if(geno_files_type  ==       'gds'     && !require(SeqArray,quietly=T)   ) {
-  warning('Wasn\'t able to find SeqArray R package, required because you input gds --geno_files. Installing now.\n
-           If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an R environment with SeqArray pre-installed so that you don\'t waste time installing the package repeatedly.')
-  if(!require("BiocManager",quietly=T)) install.packages("BiocManager"); BiocManager::install("SeqArray",ask=F)
-}
+if(geno_files_type  ==       'gds'     && !require(SeqArray,quietly=T)   ) { message('Wasn\'t able to find SeqArray R package.  Installing now. (Required because you input   gds   --geno_files.)'); get_seqarray() }
+if(geno_files_type %in% c('bcf','vcf') && !file.exists(args$bcftools_exe)) { message('Wasn\'t able to find bcftools executable. Installing now. (Required because you input bcf/vcf --geno_files.)'); get_bcftools() }
+if(geno_files_type  ==       'bgen'    && !file.exists(args$bgenix_exe)  ) { message('Wasn\'t able to find  bgenix  executable. Installing now. (Required because you input  bgen   --geno_files.)'); get_bgenix()   }
+if(                                       !file.exists(args$plink2_exe)  ) { message('Wasn\'t able to find  plink2  executable. Installing now.');                                                    get_plink2()   }
 
 ## Make sure --score_file's format is correct.
 score_dt <- fread(args$score_file)

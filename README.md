@@ -29,9 +29,9 @@ Rscript pprs.R "
 
   --fill_vcf_ids_with <"chr:pos:ref:alt", or a vcf file with IDs to annotate with>
 
-  --bcftools_exe <path/to/bcftools> (default "bcftools" or "tools/bcftools/bcftools")
-  --bgenix_exe   <path/to/bgenix>   (default "bgenix"   or "tools/bgen/build/apps/bgenix")
-  --plink2_exe   <path/to/plink2>   (default "plink2"   or "tools/plink2")
+  --bcftools_exe <path/to/bcftools> (default "./bcftools" or "bcftools")
+  --bgenix_exe   <path/to/bgenix>   (default "./bgenix"   or "bgenix")
+  --plink2_exe   <path/to/plink2>   (default "./plink2"   or "plink2")
 
   --threads <#> (default 1)
 "
@@ -53,12 +53,14 @@ Rscript pprs.R "
 # Dependencies
 + **[R](https://cloud.r-project.org/) (>=4.1)**
   - Packages: `install.packages(c("data.table","LDlinkR","parallel","XML")`
-  - (If using `.gds` files) `BiocManager::install("SeqArray")`
+
+Other dependencies are automatically installed as needed (it is expected your system has basic utilities like `curl` and `make` to download and build the needed software).
+If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an environment with these additinoal dependencies pre-installed so you don\'t waste time installing them each run.')
+
 + **[`plink2`](https://www.cog-genomics.org/plink/2.0/)**
++ (If using `.gds` files) `BiocManager::install("SeqArray")`
 + (If using `.vcf`/`.bcf` files) [`bcftools`](http://samtools.github.io/bcftools/howtos/install.html)
 + (If using `.bgen` files) [`bgenix`](https://enkre.net/cgi-bin/code/bgen/dir?ci=tip)
-
-`tool/get_tools.sh` can automatically install bgenix, bcftools, and plink2.
 
 # LDproxy population codes
 For use in `--ldlink-pop`. You can specify more than one or choose a super-population, but LD calculation will be slower.
@@ -111,3 +113,4 @@ For use in `--ldlink-pop`. You can specify more than one or choose a super-popul
 # TODO
 + Small examples for all file types
 + Remove requirement for variant IDs, just need chr,pos,ref,alt
++ create Docker & WDL

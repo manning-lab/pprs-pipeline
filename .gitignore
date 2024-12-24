@@ -2,7 +2,14 @@ old/
 data/
 scratch/
 *.tbi
-tool/*
-!tool/get_tools.sh
-!tool/README
+
 examples/*.txt
+examples/*mgbb.sh
+
+htslib/
+bcftools/
+bcftools
+bgen.tgz
+bgen/
+bgenix
+plink2
