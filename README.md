@@ -55,7 +55,7 @@ Rscript pprs.R "
   - Packages: `install.packages(c("data.table","LDlinkR","parallel","XML")`
 
 Other dependencies are automatically installed as needed (it is expected your system has basic utilities like `curl` and `make` to download and build the needed software).
-If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an environment with these additinoal dependencies pre-installed so you don\'t waste time installing them each run.')
+If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an environment with these additional dependencies pre-installed so you don\'t waste time installing them each run.
 
 + **[`plink2`](https://www.cog-genomics.org/plink/2.0/)**
 + (If using `.gds` files) `BiocManager::install("SeqArray")`
@@ -63,47 +63,13 @@ If you plan to run this pipeline repeatedly on the cloud or on a compute cluster
 + (If using `.bgen` files) [`bgenix`](https://enkre.net/cgi-bin/code/bgen/dir?ci=tip)
 
 # LDproxy population codes
-For use in `--ldlink-pop`. You can specify more than one or choose a super-population, but LD calculation will be slower.
-| pop_code | super_pop_code |                                  pop_name |
-| -------- | -------------- | ----------------------------------------- |
-|      ALL |            ALL |                           ALL POPULATIONS |
-|      AFR |            AFR |                                   AFRICAN |
-|      YRI |            AFR |                  Yoruba in Ibadan, Nigera |
-|      LWK |            AFR |                    Luhya in Webuye, Kenya |
-|      GWD |            AFR |                 Gambian in Western Gambia |
-|      MSL |            AFR |                     Mende in Sierra Leone |
-|      ESN |            AFR |                            Esan in Nigera |
-|      ASW |            AFR |   Americans of African Ancestry in SW USA |
-|      ACB |            AFR |           African Carribbeans in Barbados |
-|      AMR |            AMR |                         AD MIXED AMERICAN |
-|      MXL |            AMR |    Mexican Ancestry from Los Angeles, USA |
-|      PUR |            AMR |            Puerto Ricans from Puerto Rico |
-|      CLM |            AMR |        Colombians from Medellin, Colombia |
-|      PEL |            AMR |                 Peruvians from Lima, Peru |
-|      EAS |            EAS |                                EAST ASIAN |
-|      CHB |            EAS |              Han Chinese in Bejing, China |
-|      JPT |            EAS |                  Japanese in Tokyo, Japan |
-|      CHS |            EAS |                      Southern Han Chinese |
-|      CDX |            EAS |       Chinese Dai in Xishuangbanna, China |
-|      KHV |            EAS |         Kinh in Ho Chi Minh City, Vietnam |
-|      EUR |            EUR |                                  EUROPEAN |
-|      CEU |            EUR | Utah Residents from North and West Europe |
-|      TSI |            EUR |                         Toscani in Italia |
-|      FIN |            EUR |                        Finnish in Finland |
-|      GBR |            EUR |           British in England and Scotland |
-|      IBS |            EUR |               Iberian population in Spain |
-|      SAS |            SAS |                               SOUTH ASIAN |
-|      GIH |            SAS |  Gujarati Indian from Houston, Texas, USA |
-|      PJL |            SAS |             Punjabi from Lahore, Pakistan |
-|      BEB |            SAS |                   Bengali from Bangladesh |
-|      STU |            SAS |              Sri Lankan Tamil from the UK |
-|      ITU |            SAS |                 Indian Telugu from the UK |
+[See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) for population codes usable in `--ldlink-pop`. You can specify more than one or choose a super-population, but LD calculation will be slower.
 
 # Tips
 + If you run this as a job on a computer cluster, you may need to specify absolute file paths in order for the compute node you dispatched to find your files.
 + If you get errors using VCF files over URL like "Failed to read" or "Failed to seek" or "Could not retrieve index", try running again. It is probably just be a network issue.
 
-# Citations
+# References
 * LDlink: Machiela MJ, Chanock SJ. [LDlink: a web-based application for exploring population-specific haplotype structure and linking correlated alleles of possible functional variants.](http://www.ncbi.nlm.nih.gov/pubmed/?term=26139635) Bioinformatics. 2015 Jul 2.
 * PLINK2: Chang CC, Chow CC, Tellier LCAM, Vattikuti S, Purcell SM, Lee JJ (2015) [Second-generation PLINK: rising to the challenge of larger and richer datasets.](https://doi.org/10.1186/s13742-015-0047-8) GigaScience, 4.
 * BCFtools: Danecek P, Bonfield JK, et al. [Twelve years of SAMtools and BCFtools.](https://doi.org/10.1093/gigascience/giab008) Gigascience (2021) 10(2):giab008
