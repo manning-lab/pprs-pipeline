@@ -9,20 +9,19 @@ library(XML)
 '%ni%' <- Negate('%in%')
 
 get_bcftools <- \() {
-  message('Installing bcftools to ./bcftools...')
+  message('Installing bcftools to ./bcftools/bcftools...')
   system('git clone --depth 1 --recurse-submodules https://github.com/samtools/htslib.git')
   system('git clone --depth 1 https://github.com/samtools/bcftools.git')
-  system('cd bcftools && make -j')
-  system('cp ./bcftools/bcftools .')
+  err_code <- system('cd bcftools && make -j')
+  if(err_code!=0) stop('Failed to build bcftools')
 }
 get_bgenix <- \() {
-  message('Installing bgenix to ./bgenix... (this takes a long time)')
+  message('Installing bgenix to ./bgen/build/apps/bgenix... (this takes a long time)')
   if(file.exists('bgen.tgz')) unlink('bgen.tgz') # In case user got impatient and leaves a half-untarred directory
   system('curl -LO http://code.enkre.net/bgen/tarball/release/bgen.tgz')
   system('tar zxf bgen.tgz')
   system('mv bgen.tgz bgen') # Extracted directory retains .tgz in its name for some reason
   system('cd bgen && ./waf configure && ./waf')
-  system('cp bgen/build/apps/bgenix .')
 }
 get_plink2 <- \() {
   message('Installing plink2 to ./plink2...')
@@ -59,9 +58,9 @@ args$ldlink_pop <- 'no --ldlink_pop argument provided!'
 args$ldlink_r2 <- 0.8
 args$threads <- 1
 args$output_fnm <- 'my_results.txt'
-args$bcftools_exe <- if(file.exists('./bcftools')) './bcftools' else Sys.which('bcftools')
-args$bgenix_exe   <- if(file.exists('./bgenix'  )) './bgenix'   else Sys.which('bgenix')
-args$plink2_exe   <- if(file.exists('./plink2'  )) './plink2'   else Sys.which('plink2')
+args$bcftools_exe <- if(Sys.which('bcftools')=='') './bcftools/bcftools'      else Sys.which('bcftools')
+args$bgenix_exe   <- if(Sys.which( 'bgenix' )=='') './bgen/build/apps/bgenix' else Sys.which( 'bgenix' )
+args$plink2_exe   <- if(Sys.which( 'plink2' )=='') './plink2'                 else Sys.which( 'plink2' )
 
 # Parse command-line args
 pieces <- tstrsplit(split='--', paste(gsub('\n','',commandArgs(T)), collapse=' '))[-1]
@@ -69,7 +68,7 @@ for(piece in pieces) { parts <- unlist(tstrsplit(piece,' |=')); args[[parts[[1]]
 args <- lapply(args, \(x) x[x!=''])
 
 # --- Input validation ---
-recognized_args <- c('geno_files','sample_file','score_file','fill_vcf_ids_with','ldlink_token','ldlink_pop','ldlink_r2','ldlink_genome','ldlink_winsize','scratch_folder','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','id','ref','alt','ea'),'_col'), 'score_file_weight_cols')
+recognized_args <- c('geno_files','sample_file','score_file','ldlink_token','ldlink_pop','ldlink_r2','ldlink_genome','ldlink_winsize','scratch_folder','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
 if(any(names(args) %ni% recognized_args)) stop('Unrecognized argument(s):', paste0(' --',setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
@@ -77,7 +76,6 @@ if(is.null(args$geno_files            )) stop('--geno_files is required!\nThis m
 if(is.null(args$score_file            )) stop('--score_file is required!')
 if(is.null(args$score_file_chr_col    )) stop('--score_file_chr_col is required! This refers to the name or index of the chromosome column in your score file.\nThe chromosome format (e.g. "1" vs. "chr1") should match that in your --geno_files input.')
 if(is.null(args$score_file_pos_col    )) stop('--score_file_pos_col is required! This refers to the name or index of the position column in your score file.')
-if(is.null(args$score_file_id_col     )) stop('--score_file_id_col  is required! This refers to the name or index of the ID column in your score file.\nThe ID format (e.g. "rs1234" vs. "1:1234" vs. "chr1:1234:A:G" etc.) should match that of your --geno_files input.')
 if(is.null(args$score_file_ref_col    )) stop('--score_file_ref_col is required! This refers to the name or index of the reference allele column in your score file.')
 if(is.null(args$score_file_alt_col    )) stop('--score_file_alt_col is required! This refers to the name or index of the alternate allele column in your score file.')
 if(is.null(args$score_file_ea_col     )) stop('--score_file_ea_col  is required! This refers to the name or index of the effect allele column in your score file.')
@@ -140,7 +138,6 @@ if(                                       !file.exists(args$plink2_exe)  ) { mes
 score_dt <- fread(args$score_file)
 score_colnms <- c(chr=args$score_file_chr_col,
                   pos=args$score_file_pos_col,
-                  id =args$score_file_id_col,
                   ref=args$score_file_ref_col,
                   alt=args$score_file_alt_col,
                   ea =args$score_file_ea_col,
@@ -148,7 +145,7 @@ score_colnms <- c(chr=args$score_file_chr_col,
 
 score_colnms_not_found <- score_colnms[score_colnms %ni% names(score_dt)]
 if(length(score_colnms_not_found)>0) stop('Some columns were not found in the score file! These columns were: ', paste(collapse=' ',score_colnms_not_found))
-message(paste0('Using score file\'s "',score_colnms,'" column as ',names(score_colnms),'\n'), '\n\x1b[36mMake sure the correct score file columns were selected!!\x1b[m\n')
+message('Using score file columns:\n',sprintf('%10s: "%s"\n',names(score_colnms),score_colnms))
 
 score_dt <- fread(args$score_file) |> setnames(old=score_colnms, new=names(score_colnms))
 
@@ -157,8 +154,6 @@ if(score_dt[, !is.integer(pos)                     ]) message('Warning: score fi
 if(score_dt[, any(grepl('[^ATCGNatcgn]', ref))     ]) message('Warning: score file\'s reference allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ', paste(head(score_dt$ref),collapse=' '))
 if(score_dt[, any(grepl('[^ATCGNatcgn]', alt))     ]) message('Warning: score file\'s alternate allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ', paste(head(score_dt$alt),collapse=' '))
 if(score_dt[, any(grepl('[^ATCGNatcgn]', ea ))     ]) message('Warning: score file\'s effect allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ',    paste(head(score_dt$ea ),collapse=' '))
-if(score_dt[,!any(grepl('[0-9]',         id ))     ]) message('Warning: score file\'s id column has no numbers in it, which is suspicious, here is a sample: ',                           paste(head(score_dt$id ),collapse=' ')) 
-if(score_dt[,              anyDuplicated(id)>0     ]) stop('Found duplicated IDs in the score file! Please merge the duplicates.') # TODO suggest data.table by= or tibble group_by code maybe
 if(score_dt[,!all(sapply(.SD,is.numeric)), .SDcols=patterns('weights')]) stop('Score file weights columns do not contain all-numeric values! Here is a sample:\n', paste(collapse='\n',capture.output(score_dt[,.SD,.SDcols=patterns('weights')])))
 
 ## LDlink inputs
@@ -168,8 +163,8 @@ if(is.null(args$ldlink_token)) {
   invalid_pop_codes <- args$ldlink_pop[args$ldlink_pop %ni% list_pop()$pop_code]
   if(length(invalid_pop_codes)>0) {
     message('Error: Invalid LDlink population code(s): ', paste(invalid_pop_codes,collapse=' '),'\n',
-         'Available populations listed below. You can use more than one -- but LD calculation will be slower.\n',
-         paste(capture.output(list_pop()), collapse = '\n'))
+      'Available populations listed below. You can use more than one -- but LD calculation will be slower.\n',
+      paste(capture.output(list_pop()), collapse = '\n'))
     stop('^^')
   }
 }
@@ -182,255 +177,208 @@ dir.create(args$scratch_folder, recursive=T, showWarnings=F)
 # Get list of score file variant IDs present in the geno_files (not extracting genotype data yet). Used for getting proxies later.
 # Why not use PLINK to read all formats? Because it cannot make use of .bgi (bgen) or .csi (vcf/bcf) index files. Instead it would try to convert everything to plink2 format first, (very slow for huge datasets).
 filter_ranges_fnm <- file.path(args$scratch_folder,'filter_ranges.txt')
-filter_ids_fnm    <- file.path(args$scratch_folder,'filter_variant_ids.txt'   )
-writeLines(score_dt[,paste0(chr,'\t',pos)], filter_ranges_fnm)
-writeLines(score_dt$id, filter_ids_fnm)
+if(geno_files_type=='bgen') { writeLines(score_dt[,paste0(chr,':', pos,'-', pos)], filter_ranges_fnm)
+} else                      { writeLines(score_dt[,paste0(chr,'\t',pos,'\t',pos)], filter_ranges_fnm) }
 
-bcftools_annotation_part <- {
-  if(is.null(args$fill_vcf_ids_with))
-    ''
-  else if(args$fill_vcf_ids_with=='chr:pos:ref:alt')
-    paste(args$bcftools_exe, 'view -Ov | awk \'BEGIN {OFS="\t"} /^#/ {print; next} {$3=$1":"$2":"$4":"$5; print}\' | ')
-  else if(grepl("bcf(.gz)?$|vcf(.gz)?$", args$fill_vcf_ids_with)) # Another file to get IDs from
-    paste(args$bcftools_exe, 'annotate -c ID -a', args$fill_vcf_ids_with, '-Ou | ')
-  else
-    stop('Argument to --fill_vcf_ids must be \'chr:pos:ref:alt\' or a BCF/VCF file to get IDs from.')
-}
-
-id_extraction <- \(geno_file, filter_ranges_file, filter_ids_file, output_fnm) {
+var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm) {
+if(!file.exists(                                  output_fnm)) {
   cmd <-
-    if(geno_files_type=='bgen') paste0(
-      args$bgenix_exe, ' -list -g ', geno_file, # -list Only list variant info, no genotype data
-      #' -incl-range ', filter_ranges_file, # Purposefully commented out. bgenix extracts the _union_ of -incl-range and -incl-rsids. This can lead to variants we don't want which are at the same position as the desired variants. Doesn't help speed because bgen files are already indexed by ID, not only chr+pos.
-      ' -incl-rsids ', filter_ids_file,
-      ' | cut -f1', # Keep only ID column
-      ' | sed \'/# bgenix/d\' | sed \'/alternate_ids/d\'', # Remove comment and colname lines
-      ' > ', output_fnm
+    if(geno_files_type=='bgen') paste(
+      args$bgenix_exe, '-list -g', geno_file, # -list Only list variant info, no genotype data
+      '-incl-range', filter_ranges_fnm,
+      '| awk \'{print $3,$4,$1,$6,$7}\'', # chr,pos,id,ref,alt columns
+      '| sed -e \'/#/d\'', # Remove extra comment line # TODO eventually remove UNIX commands for native Windows compat? Soon data.table::fread() will have comment.char: https://github.com/Rdatatable/data.table/issues/856
+      '>', output_fnm
     )
-    else if(geno_files_type %in% c('vcf','bcf')) paste0(
-      args$bcftools_exe, ' view -G ', geno_file, # -G means only list variant info, no genotype data nor header
-      ' -R ', filter_ranges_file, # Need to filter by ranges otherwise will be very slow, because VCF/BCF files are only indexed by chr+pos, not ID. Unlike bgenix, -R combined with a -i filter will take the intersection of variants.
-      ' -Ou | ',
-      bcftools_annotation_part, # If no --fill_vcf_ids_with given, this is an empty string
-      args$bcftools_exe, ' query',
-      ' -i"ID=@',filter_ids_file,'"',
-      ' -f"%ID"', # Output only IDs
-      ' > ', output_fnm
+    else if(geno_files_type %in% c('vcf','bcf')) paste(
+      args$bcftools_exe, 'query', geno_file, # -G means only list variant info, no genotype data nor header
+      '-R', filter_ranges_fnm,
+      '-f"%CHROM\t%POS\t%ID\t%REF\t%ALT{0}\n"',
+      '>', output_fnm
     )
-    else if(geno_files_type=='plink1') paste0(
-      args$plink2_exe, ' --bfile ', geno_file,
-      ' --rm-dup force-first', # If dups, PLINK errors unless this is here.
-      ' --extract ', filter_ids_file,
-      ' --write-snplist --out ', sub('.snplist$','',output_fnm) # PLINK automatically adds '.snplist' to the name
+    else if(geno_files_type=='plink1') paste(
+      args$plink2_exe, '--bfile', geno_file,
+      '--rm-dup force-first', # If dups, PLINK errors unless this is here.
+      '--extract bed1', filter_ranges_fnm,
+      '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm) # PLINK automatically adds '.pvar' to the name
     )
-    else if(geno_files_type=='plink2') paste0(
-      args$plink2_exe, ' --pfile ', geno_file,
-      ' --rm-dup force-first',
-      ' --extract ', filter_ids_file,
-      ' --write-snplist --out ', sub('.snplist$','',output_fnm)
+    else if(geno_files_type=='plink2') paste(
+      args$plink2_exe, '--pfile', geno_file,
+      '--rm-dup force-first',
+      '--extract bed1', filter_ranges_fnm,
+      '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm)
     )
     else if(geno_files_type=='gds') {
       gds <- seqOpen(geno_file)
       seqSetFilterPos(gds, score_dt$chr, score_dt$pos, score_dt$ref, score_dt$alt)
-      ids <- seqGetData(gds, '$chrom_pos_allele')
-      ids <- gsub('_',':',ids) # chr:pos_ref_alt -> chr:pos:ref:alt
-      writeLines(ids,output_fnm)
+      fwrite(seqGetData(gds, c('chromosome','position','annotation/id','$ref','$alt')), output_fnm)
       seqClose(gds)
       ' ' # Dummy cmd
     }
   system(cmd, ignore.stderr=T)
-}
-found_id_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files),'.snplist')
+}}
+vars_found_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files),'.pvar')
 
 message('Checking for variants in the score_file missing from the geno_files...')
-## Don't rerun this if the found id files alredy exist, bottleneck.
-if(!all(file.exists(found_id_fnms))) invisible(mcmapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, found_id_fnms, FUN=id_extraction, mc.cores=args$threads))
+mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
-ids_found <- sapply(found_id_fnms, scan, what=character(), quiet=T) |> unlist()
-ids_not_found <- setdiff(score_dt$id, ids_found)
-ids_not_found_chrpos <- score_dt[id %in% ids_not_found, paste0('chr',chr,':',pos)] |> sub(pattern='chrchr',replacement='chr') # LDproxy only takes rsIDs or chr:pos IDs
+vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
+vars_not_found <- merge(vars_not_found,score_dt) # We'll need the effect allele (ea) column in vars_not_found later, to determine which proxy allele corresponds to the original effect allele.
+vars_not_found[, chrposid := paste0('chr',chr,':',pos) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # LDproxy only takes rsIDs or chr:pos IDs
 
-if(length(ids_found)==0) { unlink(found_id_fnms); stop('No IDs from score_file were found in geno_files! This is probably a chromosome or ID format mismatch issue, e.g. "1" vs. "chr1", or rsID vs. chr:pos ID, etc.. Or, maybe your geno_files are VCFs without IDs (like 1000G files), and you forgot to specify --fill_vcf_ids_with?') } # TODO print out a couple Ids from each file.
-message(length(ids_not_found),'/',nrow(score_dt),' variant IDs in score file not found in genotype file(s).')
+if(nrow(vars_found)==0) { unlink(found_var_fnms); stop('No IDs from score_file were found in geno_files! This is probably a chromosome and/or ref/alt allele mismatch issue, e.g. "1" vs. "chr1".') } # TODO print out table of chr Ids from each file.
+message(nrow(vars_not_found),'/',nrow(score_dt),' variant IDs in score file not found in the geno_files.')
+
 
 # Find proxies for score file variants mising from the genotype data
-if(!is.null(args$ldlink_token) & length(ids_not_found)>0) {
+if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
 
-  old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
   ## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
-  proxy_output_fnm <- paste0('proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(ids_not_found,args$ldlink_pop)),'.txt')
+                  proxy_output_fnm <- paste0(args$scratch_folder,'/proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(vars_not_found$chrposid,args$ldlink_pop,args$ldlink_r2,args$ldlink_winsize)),'.txt')
   if(!file.exists(proxy_output_fnm)) {
-    LDproxy_batch(ids_not_found_chrpos, pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
-    file.rename(paste0('combined_query_snp_list_',args$ldlink_genome,'.txt'), proxy_output_fnm)
+    old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
+    LDproxy_batch(vars_not_found$chrposid, pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
+    old_wd |> setwd()
+    file.rename(paste0(args$scratch_folder,'/combined_query_snp_list_',args$ldlink_genome,'.txt'), proxy_output_fnm)
   }
-  proxy_dt <- suppressWarnings(fread(proxy_output_fnm))
-  setwd(old_wd)
+  proxy_dt <- fread(proxy_output_fnm) |> suppressWarnings()
   
   proxy_dt <- proxy_dt[
       R2 > args$ldlink_r2
     ][!grepl('-',Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
-    ][Distance != 0
-  
-    # Rm unneeded cols
-    ][, `:=`(V1=NULL, MAF=NULL, Dprime=NULL, FORGEdb=NULL, RegulomeDB=NULL, Function=NULL)
   
     ][, chr := sub(':.*','',Coord)
-    ][, pos := sub('.*:','',Coord)
+    ][, pos := sub('.*:','',Coord) |> as.integer()
     ][, ref := sub('\\(','',tstrsplit(Alleles,'/')[[1]])
     ][, alt := sub('\\)','',tstrsplit(Alleles,'/')[[2]])
     ][, chr_n := sub('^chr','',chr)
   
+    ][, og_chr  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$chr)
+    ][, og_pos  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$pos)
+    ][, og_ref  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$ref)
+    ][, og_alt  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$alt)
+    ][, og_ea   := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$ea )
+
     # Figure out which allele of the proxy corresponds to the effect allele of the original variant
-    ][, id_from_score_file := sapply(query_snp, \(query_chrpos) ids_not_found[which(ids_not_found_chrpos==query_chrpos)])
-    ][, ea_from_score_file := sapply(id_from_score_file, \(id2) score_dt[id==id2, ea])
-    ][, ea := mapply(Correlated_Alleles, ea_from_score_file, FUN = \(as, s_ea) {
+    ][, ea := mapply(Correlated_Alleles, og_ea, FUN = \(as, og_ea) {
                 as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
-                if(as[1]==s_ea) as[2] else as[4]
+                if(as[1]==og_ea) as[2] else as[4]
               })
-    # TODO ^ ea code mega ugly surely more elgant way
-  
-    # Instead of detecting the format of the user input IDs in the score file, just throw every possible ID format at the wall, simpler.
-    ][,       rs_id  := RS_Number
-    ][,     `c:p_id` := paste0(chr,  ':',pos)
-    ][, `c:p:r:a_id` := paste0(chr,  ':',pos,':',ref,':',alt)
-    ][, `c:p_r_a_id` := paste0(chr,  ':',pos,'_',ref,'_',alt)
-    ][,     `n:p_id` := paste0(chr_n,':',pos)
-    ][, `n:p:r:a_id` := paste0(chr_n,':',pos,':',ref,':',alt)
-    ][, `n:p_r_a_id` := paste0(chr_n,':',pos,'_',ref,'_',alt)
   ]
 
-  writeLines(unlist(proxy_dt[,.SD,.SDcols=patterns('_id')]), filter_ids_fnm)
-  writeLines(       proxy_dt[,paste0(chr,'\t',pos)],         filter_ranges_fnm)
+  # Instead of detecting the format of the user input chromosomes in the score file, just throw both 'chr#' and plain '#' formats at the wall and one will work.
+  writeLines(proxy_dt[,paste0(c(chr,chr_n),'\t',pos)], filter_ranges_fnm)
   
-  proxy_found_id_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.snplist')
+  proxies_found_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.pvar')
   
-  if(!all(file.exists(proxy_found_id_fnms))) invisible(mcmapply(args$geno_files, filter_ranges_fnm, filter_ids_fnm, proxy_found_id_fnms, FUN=id_extraction, mc.cores=args$threads))
+  message('\nChecking for ~proxy~ variants in the geno_files...')
+  if(!all(file.exists(proxies_found_fnms))) mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, FUN=var_extraction, mc.cores=args$threads)
   
-  proxy_ids_found <- sapply(proxy_found_id_fnms, scan, what=character(), quiet=T) |> unlist()
-  
-  if(length(proxy_ids_found)==0) { warning('Unfortunately \x1b[36mnone of the possible proxies were found in geno_files!\x1b[m Continuing without them.')
-  } else { # Update score_dt with proxies
-    where_matched_id <- Reduce('|', lapply(proxy_ids_found,'==',proxy_dt))
-    
-    proxy_dt$replacement_id <- ''
-    invisible(mapply( # Will use the IDs that matched in the geno file to replace IDs in the score file of the variants that needed proxies.
-      row(proxy_dt)[where_matched_id],
-      col(proxy_dt)[where_matched_id],
-      FUN= \(r,c) set(proxy_dt, r, 'replacement_id', proxy_dt[r,c,with=F])
-    ))
-    
-    proxy_dt <- proxy_dt[rowSums(where_matched_id)>0] # Only proxies found in the geno file
-    proxy_dt <- proxy_dt[proxy_dt[, .I[which.max(R2)], by=id_from_score_file]$V1] # Only the best-correlated proxy for each original variant
-    
-    ids_no_proxy <- setdiff(ids_not_found, proxy_dt$id_from_score_file)
-    if(length(ids_no_proxy)>0) message('\x1b[36mCould not find proxies for ',length(ids_no_proxy),'/',length(ids_not_found),' of the variants which needed proxies\x1b[m:\n',paste(ids_no_proxy,collapse='\n'),'\nTo make sure this variant isn\'t omitted, you could try decreasing --ldlink_r2 or increasing --ldlink_winsize.\nFor now, continuing without these proxyless variants.\n')
-    
-    score_dt <- proxy_dt[score_dt, on=c(id_from_score_file='id')]
-    score_dt <- score_dt[
-      ][                      , id := id_from_score_file
-      ][!is.na(replacement_id), id := replacement_id
-      ][is.na(ea), ea := i.ea
-      ][is.na(pos), pos := i.pos
-      ][, chr := i.chr # TODO bug if proxy on different chr, but that never happens right?
-    ]
-    #score_dt[id!=id_from_score_file] # TMP: to ensure proxies look right
+  proxies_found <- do.call(rbind, lapply(proxies_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+  if(nrow(proxies_found)==0) { # sloppy fix b/c merge() errors if one is a NULL data.table
+    proxies_not_found <- vars_not_found
+  } else {
+    proxies_found <- merge(proxies_found,proxy_dt) # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
+    proxies_best_idx <- proxies_found[, .I[which.max(R2)], by=.(og_chr,og_pos,og_ref,og_alt)]$V1
+    proxies_best <- proxies_found[proxies_best_idx]
+
+    score_dt <- merge(score_dt,proxies_best,all=T)
+
+    proxies_not_found <- fsetdiff(vars_not_found[,.(chr,       pos,       ref,       alt       )],
+                                   proxies_found[,.(chr=og_chr,pos=og_pos,ref=og_ref,alt=og_alt)])
   }
+  if(nrow(proxies_not_found)>0) message('\x1b[31mCould not find proxies in the geno_files for \x1b[33m', nrow(proxies_not_found),'/',nrow(vars_not_found),'\x1b[31m of the score_file variants which needed proxies:\x1b[m\n', paste(capture.output(proxies_not_found),collapse='\n'), '\n\x1b[31mWarning: these variants will be omitted from the PRS calculations!\x1b[m\nIf you do not want these variants to be omitted, consider decreasing --ldlink_r2 or increasing --ldlink_winsize.\n')
+}
 
-} # END if(!is.null(args$ldlink_token))
-
-score_dt_simple <- score_dt[, cbind(chr,pos,id,ea,.SD), .SDcols=patterns('weights[0-9]+')]
-setnames(score_dt_simple, grep('weights[0-9]+',names(score_dt_simple), value=T), score_colnms[grepl('weights',names(score_colnms))]) # TODO very messy way of restoring weight column nms
-score_dt_simple_fnm <- file.path(args$scratch_folder,'score_file-formatted_for_plink.csv') # TODO better run-specific nm
-fwrite(score_dt_simple, score_dt_simple_fnm, sep=' ')
 
 # Extract full genotype data for the variants in the --score_file.  
 geno_subset_file_paths <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files))
 
-writeLines(score_dt_simple[,paste0(chr,'\t',pos)], filter_ranges_fnm)
-writeLines(score_dt_simple$id,                     filter_ids_fnm)
+if(geno_files_type=='bgen') { writeLines(score_dt[,paste0(chr,':', pos,'-', pos)], filter_ranges_fnm)
+} else                      { writeLines(score_dt[,paste0(chr,'\t',pos,'\t',pos)], filter_ranges_fnm) }
 
-geno_extraction <- \(geno_file, geno_subset_file) {
+geno_extraction <- \(geno_file, filter_ranges_fnm, geno_subset_file) {
+if(!file.exists(                                   geno_subset_file)) {
   cmd <-
-    if(geno_files_type=='bgen') paste0(
-      args$bgenix_exe, ' -g ', geno_file,
-      #' -incl-range ', filter_ranges_file, # Purposefully commented out. bgenix extracts the _union_ of -incl-range and -incl-rsids. This can lead to variants we don't want which are at the same position as the desired variants. Doesn't help speed because bgen files are already indexed by ID, not only chr+pos. 
-      ' -incl-rsids ', filter_ids_fnm,
-      ' > ', geno_subset_file
+    if(geno_files_type=='bgen') paste(
+      args$bgenix_exe, '-g', geno_file,
+      '-incl-range', filter_ranges_fnm,
+      '>', geno_subset_file
     )
-    else if(geno_files_type %in% c('vcf','bcf')) paste0(
-      args$bcftools_exe, ' view ', geno_file,
-      ' -R ', filter_ranges_fnm, # Need to filter by ranges otherwise will be very slow, because VCF/BCF files are only indexed by chr+pos, not ID. Unlike bgenix, -R combined with a -i filter will take the intersection of variants.
-      ' -Ob | ', # Uncompressed BCF while piping, for speed
-      bcftools_annotation_part, # If no --fill_vcf_ids_with given, this is just ''
-      args$bcftools_exe, ' view ',
-      ' -i"ID=@',filter_ids_fnm,'"',
-      ' -Ob', # Output compressed BCF format
-      ' > ', geno_subset_file
+    else if(geno_files_type %in% c('vcf','bcf')) paste(
+      args$bcftools_exe, 'view', geno_file,
+      '-R', filter_ranges_fnm,
+      '-Ob >', geno_subset_file # output compressed BCF format
     )
-    else if(geno_files_type=='plink1') paste0(
-      args$plink2, ' --bfile', geno_file,
-      ' --extract ', filter_ids_fnm,
-      ' --make-pgen --out ', geno_subset_file # Might as well conver to PLINK2 .pgen now
+    else if(geno_files_type=='plink1') paste(
+      args$plink2, '--bfile', geno_file,
+      '--extract', filter_ids_fnm,
+      '--make-pgen --out', geno_subset_file # Might as well conver to PLINK2 .pgen now
     )
-    else if(geno_files_type=='plink2') paste0(
-      args4plink2, ' --pfile', geno_file,
-      ' --extract ', filter_ids_fnm,
-      ' --make-pgen --out ', geno_subset_file
+    else if(geno_files_type=='plink2') paste(
+      args4plink2, '--pfile', geno_file,
+      '--extract', filter_ids_fnm,
+      '--make-pgen --out', geno_subset_file
     )
     else if(geno_files_type=='gds') {
       gds <- seqOpen(geno_file)
       seqSetFilterPos(gds, score_dt$chr, score_dt$pos, score_dt$ref, score_dt$alt, verbose=F)
-      seqGDS2BED(gds, geno_subset_file, write.rsid='chr_pos_ref_alt', verbose=F) # PLINK2 cannot handle GDS files, so have to convert
-      system(paste0('awk \'{gsub(/_/,":"); print}\' ',geno_subset_file,'.bim > tmp && mv tmp ',geno_subset_file,'.bim')) # Why not sed -i 's/_/:/g'? sed -i syntax is different between Linux & Mac/BSD. TODO: figure out something better, this sucks
+      seqGDS2BED(gds, geno_subset_file, verbose=F) # PLINK2 cannot handle GDS files, so have to convert
+      geno_files_type <<- 'plink1'
       seqClose(gds)
       ' '
     }
   system(cmd, ignore.stderr=T)
-}
+}}
  
 message('Extracting genotype data...')
-# Don't rerun this if the subsetted files alredy exist, big bottleneck.
-  # TODO Unfortunately it's trickier to check this for GDS files since we chang ethe file type. Maybe move the file.exists check INSIDE the function then?
-if(!all(file.exists(geno_subset_file_paths))) invisible(mcmapply(args$geno_files, geno_subset_file_paths, FUN = geno_extraction, mc.cores=args$threads))
+mcmapply(args$geno_files, filter_ranges_fnm, geno_subset_file_paths, FUN = geno_extraction, mc.cores=args$threads) |> invisible()
 
-if(geno_files_type=='gds') geno_files_type <- 'plink1' # As mentioned before, PLINK2 cannot handle GDS files
 unlink(paste0(basename(args$geno_files),'.tbi')) # Clean up index files that bcftools pulls in
-                                                                                                        # v TODO v: is there any way to be sure which is the reference alle in a user-provided .bgen?
-if(geno_files_type  ==       'bgen'   ) plink_input_flags <- paste0('--bgen  ',geno_subset_file_paths,' ref-unknown --sample ',args$sample_file)
-if(geno_files_type %in% c('bcf','vcf')) plink_input_flags <- paste0('--bcf   ',geno_subset_file_paths) # No matter what, the subset of genotype data we extract will be in BCF format.
+                                                                                                        # v TODO v: is there any way to be sure which is the reference allele in a user-provided .bgen? Answer: no. So make it is user flag. Or implement some allele-checking algo but that'd be miserable.
+if(geno_files_type  ==       'bgen'   ) plink_input_flags <- paste0('--bgen  ',geno_subset_file_paths,' ref-first --sample ',args$sample_file)
+if(geno_files_type %in% c('bcf','vcf')) plink_input_flags <- paste0('--bcf   ',geno_subset_file_paths)
 if(geno_files_type  ==      'plink1'  ) plink_input_flags <- paste0('--bfile ',geno_subset_file_paths)
 if(geno_files_type  ==      'plink2'  ) plink_input_flags <- paste0('--pfile ',geno_subset_file_paths)
 stopifnot(!is.null(plink_input_flags))
 plink_output_flags <- paste0('--allow-misleading-out-arg --out ', geno_subset_file_paths)
 # PRS result files will be '<scratch_folder>/<score_filename>-<geno_filename>.sscore'
 
+score_dt_simple <- score_dt[, cbind(cpraid=paste0(sub('chr','',chr),':',pos,':',ref,':',alt), ea, .SD), .SDcols=patterns('weights[0-9]+')]
+setnames(score_dt_simple, grep('weights[0-9]+',names(score_dt_simple), value=T), score_colnms[grepl('weights',names(score_colnms))]) # TODO very messy way of restoring weight column nms
+score_dt_simple_fnm <- file.path(args$scratch_folder,'score_file-formatted_for_plink.csv') # TODO better run-specific nm
+fwrite(score_dt_simple, score_dt_simple_fnm, sep=' ')
+
+
 # Finally calculate PRSes!!
 plink_prs_cmds <- paste(
   args$plink2_exe, plink_input_flags,
-  '--score', score_dt_simple_fnm, '3 4',
+  '--set-all-var-ids @:#:\\$r:\\$a', # chr:pos:ref:alt
+  '--score', score_dt_simple_fnm,
     'ignore-dup-ids',
     'header-read', # Use row as names for clusters
     'cols=scoresums', # Output plain sum(dosages*weights), without averaging, so that we can sum scores across chromosomes. Then we can take the average.
     'list-variants',
-  '--score-col-nums', paste0('5-',ncol(score_dt_simple)), # Skip ID & effect allele columns
+  '--score-col-nums', paste0('3-',ncol(score_dt_simple)), # Skip ID & effect allele columns
   #'--rm-dup force-first',
   plink_output_flags
 )
-#message('\nRunning the following commands to calculate PRSes...:\n    ', paste(plink_prs_cmds,collapse='\n    '))
 
 message('Calculating PRSes...')
 err_codes <- mclapply(plink_prs_cmds,system, ignore.stdout=T,ignore.stderr=T, mc.cores=args$threads)
 
 if(any(err_codes!=0)) message('\nPLINK PRS calculation errors happened for some files. Check these logs:\n    ', paste0(geno_subset_file_paths[err_codes!=0],'.log',collapse='\n    '), '\n(A common "error" is that no variants were in the input file, but that may just be because you provided files for all chromosomes but your score file didn\'t have a variant in every chromosome. If so, this is not a concern.)')
-# TODO: No variants found should not be considered an error, because it is normal that a user provides separate chr 1-22 files, but there is not a weighted variant in every chr. To avoid this, right after the LDlink step, geno_subset_files with no score file variants should be removed. Something like that.
+# TODO: "No variants found" should not be considered an error, because it is normal that a user provides separate chr 1-22 files, but there is not a weighted variant in every chr. To avoid this, right after the LDlink step, geno_subset_files with no score file variants should be removed. Something like that.
 
 
 # Sum scores from each run
-prs_files      <- list.files(path=args$scratch_folder, pattern=paste0(basename(geno_subset_file_paths),'.sscore$',collapse='|')) # Why list.files and not just add .sscore? Because some .sscore files might not exist if a chr had 0 of the score file's variants in it.
+prs_files      <- list.files(path=args$scratch_folder, pattern=paste0(basename(geno_subset_file_paths),'.sscore$',collapse='|')) # Why list.files and not just add .sscore? Because some .sscore files might not exist if a chr had 0 of the score file's variants in it. # TODO this will no longer be a concern if I remove geno_subset_files with no score file variants as mentioned above.
 prs_file_paths <- file.path(args$scratch_folder, prs_files)
-prs_sums <- rbindlist(lapply(prs_file_paths,fread))[, lapply(.SD, sum), by='#IID']
+prs_sums <- rbindlist(lapply(prs_file_paths,fread))[, lapply(.SD, sum), by='#IID'] # TODO: dup variants in a geno_file will be ignored. But dup variants ~across~ geno_files will get ~added~. Add a [!duplicated(.(chr,pos,ref,alt))] step here? Could save a user if they accidentally input the same chr's geno_file twice.
 
 fwrite(prs_sums, args$output_fnm)
 message('Done! PRS results file: ', args$output_fnm)
 
 # TODO: --q-score-range option useful for global PRS, see Kenny script for referene
+#   Although that could be easily implemented here in R by allowing the user to input an optional --score_file_p_col and --p-threshold(s). Tricky part would be to do good caching of var_extraction() & geno_extraction(), so maybe leaving it to plink is better?
