@@ -26,9 +26,9 @@ Rscript pprs.R "
   --ldlink-winsize <distance to search for proxies> (default 100000)
   --ldlink-genome <grch37/grch38/grch38_high_coverage> (default: grch38_high_coverage)
 
-  --bcftools_exe <path/to/bcftools> (default "./bcftools" or "bcftools")
-  --bgenix_exe   <path/to/bgenix>   (default "./bgenix"   or "bgenix")
-  --plink2_exe   <path/to/plink2>   (default "./plink2"   or "plink2")
+  --bcftools_exe <path/to/bcftools> (default "bcftools" or auto-installation)
+  --bgenix_exe   <path/to/bgenix>   (default  "bgenix"  or auto-installation)
+  --plink2_exe   <path/to/plink2>   (default  "plink2"  or auto-installation)
 
   --threads <#> (default 1)
 "
@@ -43,27 +43,20 @@ Rscript pprs.R "
   - No duplicate IDs allowed.
 + `--ldlink-token`: This pipeline can use [LDproxy](https://ldlink.nih.gov/?tab=ldproxy) via the `LDlinkR` package to find variants that are highly correlated with the variants in your score file, so that if a variant is missing from your genotype file, a highly correlated proxy can be used instead. A secret token is required to access the LDproxy servers, to limit bad actors from overloading the servers. You can easily [obtain a token by registering here](https://ldlink.nih.gov/?tab=apiaccess).
   - If no token is provided, the pipeline will proceed without finding proxies, dropping missing variants.
-  - `--ldlink-pop`: One or more population codes. See below. LD will be calculated from the pool of these population groups. Note that the more populations you select, the longer it will take to find proxies.
+  - `--ldlink-pop`: One or more population codes. [See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) the list of accepted codes. LD will be calculated from the pool of these population groups. Note that the more populations you select, the longer it will take to find proxies.
   - `--ldlink-winsize`: The larger the window size, the longer it will take to calculate proxies.
 
 # Dependencies
 + **[R](https://cloud.r-project.org/) (>=4.1)**
   - Packages: `install.packages(c("data.table","LDlinkR","parallel","XML")`
 
-Other dependencies are automatically installed as needed (it is expected your system has basic utilities like `curl` and `make` to download and build the needed software).
-If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an environment with these additional dependencies pre-installed so you don\'t waste time installing them each run.
+Other dependencies are automatically installed as needed. (They will be installed to the current directory. It is expected your system has basic utilities like `curl` and `make` to download and build the needed software).
+If you plan to run this pipeline repeatedly on the cloud or on a compute cluster, consider using an environment with these additional dependencies pre-installed so you don\'t waste time installing them each run:
 
 + **[`plink2`](https://www.cog-genomics.org/plink/2.0/)**
-+ (If using `.gds` files) `BiocManager::install("SeqArray")`
-+ (If using `.vcf`/`.bcf` files) [`bcftools`](http://samtools.github.io/bcftools/howtos/install.html)
 + (If using `.bgen` files) [`bgenix`](https://enkre.net/cgi-bin/code/bgen/dir?ci=tip)
-
-# LDproxy population codes
-[See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) for population codes usable in `--ldlink-pop`. You can specify more than one or choose a super-population, but LD calculation will be slower.
-
-# Tips
-+ If you run this as a job on a computer cluster, you may need to specify absolute file paths in order for the compute node you dispatched to find your files.
-+ If you get errors using VCF files over URL like "Failed to read" or "Failed to seek" or "Could not retrieve index", try running again. It is probably just be a network issue.
++ (If using `.vcf`/`.bcf` files) [`bcftools`](http://samtools.github.io/bcftools/howtos/install.html)
++ (If using `.gds` files) [SeqArray R package](https://www.bioconductor.org/packages/release/bioc/html/SeqArray.html)
 
 # References
 * LDlink: Machiela MJ, Chanock SJ. [LDlink: a web-based application for exploring population-specific haplotype structure and linking correlated alleles of possible functional variants.](http://www.ncbi.nlm.nih.gov/pubmed/?term=26139635) Bioinformatics. 2015 Jul 2.
@@ -73,6 +66,6 @@ If you plan to run this pipeline repeatedly on the cloud or on a compute cluster
 * SeqArray: Zheng X, Gogarten S, Lawrence M, Stilp A, Conomos M, Weir B, Laurie C, Levine D (2017). [SeqArray – A storage-efficient high-performance data format for WGS variant calls.](https://doi:10.1093/bioinformatics/btx145) Bioinformatics, 33(15), 2251-2257.
 
 # TODO
-+ Small examples for all file types
 + create Docker & WDL
++ Small examples for all file types
 + Tell Broad cluster ppl to `use GCC-5.2` or `use Bcftools` if bcftools fails to build. Or give general advice to enterprise linux ppl that they'll need gcc>=5.2.
