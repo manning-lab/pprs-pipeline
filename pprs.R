@@ -223,12 +223,18 @@ message('Checking for variants in the score_file missing from the geno_files...'
 mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
 vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+
+if(nrow(vars_found)==0 || !any(vars_found$chr %in% score_dt$chr)) { # seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
+  unlink(vars_found_fnms)
+  stop('No IDs from score_file were found in geno_files! This is probably a chromosome and/or ref/alt allele mismatch issue, e.g. "1" vs. "chr1".')
+  # TODO print out table of example chr Ids from each file.
+}
+
 vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
 vars_not_found <- merge(vars_not_found,score_dt) # We'll need the effect allele (ea) column in vars_not_found later, to determine which proxy allele corresponds to the original effect allele.
 vars_not_found[, chrposid := paste0('chr',chr,':',pos) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # LDproxy only takes rsIDs or chr:pos IDs
 
-if(nrow(vars_found)==0) { unlink(found_var_fnms); stop('No IDs from score_file were found in geno_files! This is probably a chromosome and/or ref/alt allele mismatch issue, e.g. "1" vs. "chr1".') } # TODO print out table of chr Ids from each file.
-message(nrow(vars_not_found),'/',nrow(score_dt),' variant IDs in score file not found in the geno_files.')
+message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.', if(is.null(args$ldlink_token)) ' \x1b[31mWhich will be omitted because no --ldlink_token was provided for getting proxies!!\x1b[m')
 
 
 # Find proxies for score file variants mising from the genotype data
