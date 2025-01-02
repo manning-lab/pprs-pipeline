@@ -20,11 +20,11 @@ Rscript pprs.R "
 
   --output_fnm (default "my_results.txt")
 
-  --ldlink-token <e.g. 7ad621fa1bd2>
-  --ldlink-pop <population code like GBR>
-  --ldlink-r2 <between 0-1, proxy minimum R^2> (default 0.8)
-  --ldlink-winsize <distance to search for proxies> (default 100000)
-  --ldlink-genome <grch37/grch38/grch38_high_coverage> (default: grch38_high_coverage)
+  --ldlink_token <e.g. 7ad621fa1bd2>
+  --ldlink_pop <population code like GBR>
+  --ldlink_r2 <between 0-1, proxy minimum R^2> (default 0.8)
+  --ldlink_winsize <distance to search for proxies> (default 100000)
+  --ldlink_genome <grch37/grch38/grch38_high_coverage> (default: grch38_high_coverage)
 
   --bcftools_exe <path/to/bcftools> (default "bcftools" or auto-installation)
   --bgenix_exe   <path/to/bgenix>   (default  "bgenix"  or auto-installation)
@@ -41,10 +41,10 @@ Rscript pprs.R "
   - If there are variants with duplicate chr,pos,ref,alt in your genotype data, the first will be chosen.
 + **`--score_file`** Must contain columns for chromosome, position, variant IDs, reference allele, alternate allele, effect allele, and at least one column of weights.
   - No duplicate IDs allowed.
-+ `--ldlink-token`: This pipeline can use [LDproxy](https://ldlink.nih.gov/?tab=ldproxy) via the `LDlinkR` package to find variants that are highly correlated with the variants in your score file, so that if a variant is missing from your genotype file, a highly correlated proxy can be used instead. A secret token is required to access the LDproxy servers, to limit bad actors from overloading the servers. You can easily [obtain a token by registering here](https://ldlink.nih.gov/?tab=apiaccess).
++ `--ldlink_token`: This pipeline can use [LDproxy](https://ldlink.nih.gov/?tab=ldproxy) via the `LDlinkR` package to find variants that are highly correlated with the variants in your score file, so that if a variant is missing from your genotype file, a highly correlated proxy can be used instead. A secret token is required to access the LDproxy servers, to limit bad actors from overloading the servers. You can easily [obtain a token by registering here](https://ldlink.nih.gov/?tab=apiaccess).
   - If no token is provided, the pipeline will proceed without finding proxies, dropping missing variants.
-  - `--ldlink-pop`: One or more population codes. [See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) the list of accepted codes. LD will be calculated from the pool of these population groups. Note that the more populations you select, the longer it will take to find proxies.
-  - `--ldlink-winsize`: The larger the window size, the longer it will take to calculate proxies. Must be < 1000000.
+  - `--ldlink_pop`: One or more population codes. [See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) the list of accepted codes. LD will be calculated from the pool of these population groups. Note that the more populations you select, the longer it will take to find proxies.
+  - `--ldlink_winsize`: The larger the window size, the longer it will take to calculate proxies. Must be < 1000000.
 
 # Dependencies
 + **[R](https://cloud.r-project.org/) (>=4.1)**
