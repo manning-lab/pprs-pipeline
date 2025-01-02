@@ -44,7 +44,7 @@ Rscript pprs.R "
 + `--ldlink-token`: This pipeline can use [LDproxy](https://ldlink.nih.gov/?tab=ldproxy) via the `LDlinkR` package to find variants that are highly correlated with the variants in your score file, so that if a variant is missing from your genotype file, a highly correlated proxy can be used instead. A secret token is required to access the LDproxy servers, to limit bad actors from overloading the servers. You can easily [obtain a token by registering here](https://ldlink.nih.gov/?tab=apiaccess).
   - If no token is provided, the pipeline will proceed without finding proxies, dropping missing variants.
   - `--ldlink-pop`: One or more population codes. [See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) the list of accepted codes. LD will be calculated from the pool of these population groups. Note that the more populations you select, the longer it will take to find proxies.
-  - `--ldlink-winsize`: The larger the window size, the longer it will take to calculate proxies.
+  - `--ldlink-winsize`: The larger the window size, the longer it will take to calculate proxies. Must be < 1000000.
 
 # Dependencies
 + **[R](https://cloud.r-project.org/) (>=4.1)**

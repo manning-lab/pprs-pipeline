@@ -68,7 +68,7 @@ for(piece in pieces) { parts <- unlist(tstrsplit(piece,' |=')); args[[parts[[1]]
 args <- lapply(args, \(x) x[x!=''])
 
 # --- Input validation ---
-recognized_args <- c('geno_files','sample_file','score_file','ldlink_token','ldlink_pop','ldlink_r2','ldlink_genome','ldlink_winsize','scratch_folder','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
+recognized_args <- c('geno_files','sample_file','score_file','ldlink_token','ldlink_pop','ldlink_r2','ldlink_genome','ldlink_winsize','ldlink_yes_really','scratch_folder','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
 if(any(names(args) %ni% recognized_args)) stop('Unrecognized argument(s):', paste0(' --',setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
@@ -236,9 +236,9 @@ vars_not_found[, chrposid := paste0('chr',chr,':',pos) |> sub(pattern='chrchr',r
 
 message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.', if(is.null(args$ldlink_token)) ' \x1b[31mWhich will be omitted because no --ldlink_token was provided for getting proxies!!\x1b[m')
 
-
 # Find proxies for score file variants mising from the genotype data
 if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
+  if(nrow(vars_not_found)>100 && is.null(args$ldlink_yes_really)) stop('That\'s a lot of variants to find proxies for! Consider limiting the number of variants used to calculate your PRS by setting a p-value threshold.\nIf you really need all these proxies, please contact LDlink support at \x1b[34mNCILDlinkWebAdmin@mail.nih.gov\x1b[m to let them know you\'re planning to make a large number of API calls. If they give you the O.K. you can run this again with "--ldlink_yes_really" to skip this error message.')
 
   ## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
                   proxy_output_fnm <- paste0(args$scratch_folder,'/proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(vars_not_found$chrposid,args$ldlink_pop,args$ldlink_r2,args$ldlink_winsize)),'.txt')
