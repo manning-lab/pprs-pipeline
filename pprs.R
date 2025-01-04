@@ -319,12 +319,12 @@ if(!file.exists(                                   geno_subset_file)) {
     )
     else if(geno_files_type=='plink1') paste(
       args$plink2, '--bfile', geno_file,
-      '--extract', filter_ids_fnm,
+      '--extract bed1', filter_ranges_fnm,
       '--make-pgen --out', geno_subset_file # Might as well conver to PLINK2 .pgen now
     )
     else if(geno_files_type=='plink2') paste(
       args4plink2, '--pfile', geno_file,
-      '--extract', filter_ids_fnm,
+      '--extract bed1', filter_ranges_fnm,
       '--make-pgen --out', geno_subset_file
     )
     else if(geno_files_type=='gds') {
