@@ -97,8 +97,8 @@ if( all(grepl(      '://', args$geno_files)) & any(grepl('\\*', args$geno_files)
 }
 ### Resolve patterns for local files
                                          args$score_file  <- list.files(dirname(args$score_file),  pattern=paste(collapse='|',basename(args$score_file )), full.names=T)
-if(!any(grepl('://',args$geno_files))) { args$geno_files  <- list.files(dirname(args$geno_files),  pattern=paste(collapse='|',basename(args$geno_files )), full.names=T) }
-if(!is.null(args$sample_file))         { args$sample_file <- list.files(dirname(args$sample_file), pattern=paste(collapse='|',basename(args$sample_file)), full.names=T) }
+if(!any(grepl('://',args$geno_files))) { args$geno_files  <- list.files(dirname(args$geno_files),  pattern=paste(collapse='|',basename(args$geno_files )), full.names=T) |> unique() }
+if(!is.null(args$sample_file))         { args$sample_file <- list.files(dirname(args$sample_file), pattern=paste(collapse='|',basename(args$sample_file)), full.names=T)             }
 
 arg_lengths <- lengths(args)[names(args) %ni% c('geno_files','score_file_weight_cols')]
 args_too_long <- names(arg_lengths)[arg_lengths>1]
