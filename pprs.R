@@ -266,9 +266,23 @@ if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
     ][, og_alt  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$alt)
     ][, og_ea   := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$ea )
 
+    # LDproxy only takes chr:pos, no alleles.
+    # We need to ensure our alleles match what LDproxy thinks is the ref/alt for that position, and keep only those rows.
+    # If we don't do this, consider a score file with two variants having the same position, but different alleles.
+    #   The same proxies would be found for both, or one would be found as the proxy for the other,
+    #     which would be bad because then there would be perfectly duplicate rows in the score file,
+    #     meaning the variant would unfairly contribute to the score multiple times.
+    #   This is a reasonable (albeit rare) case. Different alleles in a multiallelic site could all have different effects.
+    #     Or, one could  simply be lift over genomic coords and discover that a site is now multiallic in the new reference genome, but you don't want to have to choose just one of the multi-alleles.
+    ][ mapply(Correlated_Alleles, og_ref, og_alt, FUN= \(as, og_ref, og_alt) {
+         as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
+         as[1]==og_ref & as[3]==og_alt |
+         as[3]==og_ref & as[1]==og_alt
+       })
+
     # Figure out which allele of the proxy corresponds to the effect allele of the original variant
     ][, ea := mapply(Correlated_Alleles, og_ea, FUN = \(as, og_ea) {
-                as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
+                as <- strsplit(as, ',|=')[[1]]
                 if(as[1]==og_ea) as[2] else as[4]
               })
   ]
