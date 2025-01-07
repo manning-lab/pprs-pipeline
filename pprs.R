@@ -209,8 +209,9 @@ if(!file.exists(                                  output_fnm)) {
       '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm)
     )
     else if(geno_files_type=='gds') {
+      ranges <- fread(filter_ranges_fnm, col.names=c('chr','start','end'))
       gds <- seqOpen(geno_file)
-      seqSetFilterPos(gds, score_dt$chr, score_dt$pos, score_dt$ref, score_dt$alt)
+      seqSetFilterPos(gds, ranges$chr, ranges$start)
       fwrite(seqGetData(gds, c('chromosome','position','annotation/id','$ref','$alt')), output_fnm)
       seqClose(gds)
       ' ' # Dummy cmd
@@ -296,6 +297,8 @@ if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
   if(!all(file.exists(proxies_found_fnms))) mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, FUN=var_extraction, mc.cores=args$threads)
   
   proxies_found <- do.call(rbind, lapply(proxies_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+  proxies_found[, chr := paste0('chr',chr) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # proxy_dt always has chr prefix, but genotype_data might not
+
   if(nrow(proxies_found)==0) { # sloppy fix b/c merge() errors if one is a NULL data.table
     proxies_not_found <- vars_not_found
   } else {
@@ -345,15 +348,16 @@ if(!file.exists(                                   geno_subset_file)) {
       gds <- seqOpen(geno_file)
       seqSetFilterPos(gds, score_dt$chr, score_dt$pos, score_dt$ref, score_dt$alt, verbose=F)
       seqGDS2BED(gds, geno_subset_file, verbose=F) # PLINK2 cannot handle GDS files, so have to convert
-      geno_files_type <<- 'plink1'
       seqClose(gds)
       ' '
     }
   system(cmd, ignore.stderr=T, ignore.stdout=T)
 }}
- 
+
 message('Extracting genotype data...')
 mcmapply(args$geno_files, filter_ranges_fnm, geno_subset_file_paths, FUN = geno_extraction, mc.cores=args$threads) |> invisible()
+
+if(geno_files_type == 'gds') geno_files_type <<- 'plink1' # GDS were converted to PLINK1 format.
 
 unlink(paste0(basename(args$geno_files),'.tbi')) # Clean up index files that bcftools pulls in
                                                                                                         # v TODO v: is there any way to be sure which is the reference allele in a user-provided .bgen? Answer: no. So make it is user flag. Or implement some allele-checking algo but that'd be miserable.
