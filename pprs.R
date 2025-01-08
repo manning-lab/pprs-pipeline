@@ -223,15 +223,18 @@ vars_found_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',
 message('Checking for variants in the score_file missing from the geno_files...')
 mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
-vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+vars_found     <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
 
-if(nrow(vars_found)==0 || !any(vars_found$chr %in% score_dt$chr)) { # seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
+if(nrow(vars_not_found)==nrow(score_dt) || !any(vars_found$chr %in% score_dt$chr)) { # seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
   unlink(vars_found_fnms)
-  stop('No IDs from score_file were found in geno_files! This is probably a chromosome and/or ref/alt allele mismatch issue, e.g. "1" vs. "chr1".')
+  stop('No IDs from score_file were found in geno_files! This might be caused by:
+        1. Chromosome naming mismatch between your score file and the geno type data, e.g. "1" vs. "chr1".
+        2. Your ref/alt allele columns could be flipped.
+        3. Your score file / genotype data positions could be of different reference genomes.')
   # TODO print out table of example chr Ids from each file.
 }
 
-vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
 vars_not_found <- merge(vars_not_found,score_dt) # We'll need the effect allele (ea) column in vars_not_found later, to determine which proxy allele corresponds to the original effect allele.
 vars_not_found[, chrposid := paste0('chr',chr,':',pos) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # LDproxy only takes rsIDs or chr:pos IDs
 
