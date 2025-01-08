@@ -147,7 +147,7 @@ score_colnms_not_found <- score_colnms[score_colnms %ni% names(score_dt)]
 if(length(score_colnms_not_found)>0) stop('Some columns were not found in the score file! These columns were: ', paste(collapse=' ',score_colnms_not_found))
 message('Using score file columns:\n',sprintf('%10s: "%s"\n',names(score_colnms),score_colnms))
 
-score_dt <- fread(args$score_file) |> setnames(old=score_colnms, new=names(score_colnms))
+score_dt <- fread(args$score_file)[,..score_colnms] |> setnames(names(score_colnms))
 
 if(score_dt[, !is.integer(chr) & !is.character(chr)]) message('Warning: score file\'s chromosome column is not character or integer type which is suspicious. Here is a sample: ',        paste(head(score_dt$chr),collapse=' '))
 if(score_dt[, !is.integer(pos)                     ]) message('Warning: score file\'s position column is not integer type which is suspicious. Here is a sample: ',                       paste(head(score_dt$pos),collapse=' '))
