@@ -292,7 +292,8 @@ if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
   ]
 
   # Instead of detecting the format of the user input chromosomes in the score file, just throw both 'chr#' and plain '#' formats at the wall and one will work.
-  writeLines(proxy_dt[,paste0(c(chr,chr_n),'\t',pos)], filter_ranges_fnm)
+  if(geno_files_type=='bgen') { writeLines(proxy_dt[,paste0(c(chr,chr_n),':', pos,'-', pos)], filter_ranges_fnm)
+  } else                      { writeLines(proxy_dt[,paste0(c(chr,chr_n),'\t',pos,'\t',pos)], filter_ranges_fnm) }
   
   proxies_found_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.pvar')
   
