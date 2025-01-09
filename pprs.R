@@ -240,6 +240,7 @@ vars_not_found[, chrposid := paste0('chr',chr,':',pos) |> sub(pattern='chrchr',r
 
 message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.', if(is.null(args$ldlink_token)) ' \x1b[31mWhich will be omitted because no --ldlink_token was provided for getting proxies!!\x1b[m')
 
+
 # Find proxies for score file variants mising from the genotype data
 if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
   if(nrow(vars_not_found)>100 && is.null(args$ldlink_yes_really)) stop('That\'s a lot of variants to find proxies for! Consider limiting the number of variants used to calculate your PRS by setting a p-value threshold.\nIf you really need all these proxies, please contact LDlink support at \x1b[34mNCILDlinkWebAdmin@mail.nih.gov\x1b[m to let them know you\'re planning to make a large number of API calls. If they give you the O.K. you can run this again with "--ldlink_yes_really" to skip this error message.')
@@ -248,14 +249,15 @@ if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
                   proxy_output_fnm <- paste0(args$scratch_folder,'/proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(vars_not_found$chrposid,args$ldlink_pop,args$ldlink_r2,args$ldlink_winsize)),'.txt')
   if(!file.exists(proxy_output_fnm)) {
     old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
-    LDproxy_batch(vars_not_found$chrposid, pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
+    LDproxy_batch(unique(vars_not_found$chrposid), pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
     old_wd |> setwd()
     file.rename(paste0(args$scratch_folder,'/combined_query_snp_list_',args$ldlink_genome,'.txt'), proxy_output_fnm)
   }
+
   proxy_dt <- fread(proxy_output_fnm) |> suppressWarnings()
   
   proxy_dt <- proxy_dt[
-      R2 > args$ldlink_r2
+    ][R2 > args$ldlink_r2
     ][!grepl('-',Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
   
     ][, chr := sub(':.*','',Coord)
@@ -263,59 +265,77 @@ if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
     ][, ref := sub('\\(','',tstrsplit(Alleles,'/')[[1]])
     ][, alt := sub('\\)','',tstrsplit(Alleles,'/')[[2]])
     ][, chr_n := sub('^chr','',chr)
-  
-    ][, og_chr  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$chr)
-    ][, og_pos  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$pos)
-    ][, og_ref  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$ref)
-    ][, og_alt  := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$alt)
-    ][, og_ea   := sapply(query_snp, \(query_chrposid) vars_not_found[chrposid==query_chrposid]$ea )
+  ]
 
-    # LDproxy only takes chr:pos, no alleles.
-    # We need to ensure our alleles match what LDproxy thinks is the ref/alt for that position, and keep only those rows.
-    # If we don't do this, consider a score file with two variants having the same position, but different alleles.
-    #   The same proxies would be found for both, or one would be found as the proxy for the other,
-    #     which would be bad because then there would be perfectly duplicate rows in the score file,
-    #     meaning the variant would unfairly contribute to the score multiple times.
-    #   This is a reasonable (albeit rare) case. Different alleles in a multiallelic site could all have different effects.
-    #     Or, one could  simply be lift over genomic coords and discover that a site is now multiallic in the new reference genome, but you don't want to have to choose just one of the multi-alleles.
-    ][ mapply(Correlated_Alleles, og_ref, og_alt, FUN= \(as, og_ref, og_alt) {
+  proxy_dt <- merge(proxy_dt,
+    vars_not_found[, .(chr_og=chr, pos_og=pos, ref_og=ref, alt_og=alt, ea_og=ea, chrposid)],
+    all.x=T, allow.cartesian=T,                          by.x='query_snp', by.y='chrposid',
+  ) #        allow.cartesian=T in case of multiallelic variants in the score file.
+
+  # LDproxy only takes chr:pos, no alleles.
+  # We need to ensure our alleles match what LDproxy thinks is the ref/alt for that position, and keep only those rows.
+  # If we don't do this, consider a score file with two variants having the same position, but different alleles.
+  #   The same proxies would be found for both, or one would be found as the proxy for the other,
+  #     which would be bad because then there would be perfectly duplicate rows in the score file,
+  #     meaning the variant would unfairly contribute to the score multiple times.
+  #   This is a reasonable (albeit rare) case. Different alleles in a multiallelic site could all have different effects.
+  #     Or, one could  simply be lift over genomic coords and discover that a site is now multiallic in the new reference genome, but you don't want to have to choose just one of the multi-alleles.
+  #   Relatedly, the same proxy could be found for two variants at different position, but presumably this is okay.
+  #     If so, this is more of an issue with the score_file (the variants should maybe be LD-pruned).
+  proxy_dt <- proxy_dt[
+    ][ mapply(Correlated_Alleles, ref_og, alt_og, FUN= \(as, ref_og, alt_og) {
          as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
-         as[1]==og_ref & as[3]==og_alt |
-         as[3]==og_ref & as[1]==og_alt
+         as[1]==ref_og & as[3]==alt_og |
+         as[3]==ref_og & as[1]==alt_og
        })
 
     # Figure out which allele of the proxy corresponds to the effect allele of the original variant
-    ][, ea := mapply(Correlated_Alleles, og_ea, FUN = \(as, og_ea) {
+    ][, ea := mapply(Correlated_Alleles, ea_og, FUN = \(as, ea_og) {
                 as <- strsplit(as, ',|=')[[1]]
-                if(as[1]==og_ea) as[2] else as[4]
+                if(as[1]==ea_og) as[2] else as[4]
               })
   ]
 
-  # Instead of detecting the format of the user input chromosomes in the score file, just throw both 'chr#' and plain '#' formats at the wall and one will work.
-  if(geno_files_type=='bgen') { writeLines(proxy_dt[,paste0(c(chr,chr_n),':', pos,'-', pos)], filter_ranges_fnm)
-  } else                      { writeLines(proxy_dt[,paste0(c(chr,chr_n),'\t',pos,'\t',pos)], filter_ranges_fnm) }
-  
-  proxies_found_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.pvar')
-  
-  message('\nChecking for ~proxy~ variants in the geno_files...')
-  if(!all(file.exists(proxies_found_fnms))) mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, FUN=var_extraction, mc.cores=args$threads)
-  
-  proxies_found <- do.call(rbind, lapply(proxies_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
-  proxies_found[, chr := paste0('chr',chr) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # proxy_dt always has chr prefix, but genotype_data might not
-
-  if(nrow(proxies_found)==0) { # sloppy fix b/c merge() errors if one is a NULL data.table
+  if(nrow(proxy_dt)==0) { # May happen if LDproxy found proxies for the wrong variant, i.e. for a variant that doesn't match our score_file variant's alleles.
     proxies_not_found <- vars_not_found
   } else {
-    proxies_found <- merge(proxies_found,proxy_dt) # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
-    proxies_best_idx <- proxies_found[, .I[which.max(R2)], by=.(og_chr,og_pos,og_ref,og_alt)]$V1
-    proxies_best <- proxies_found[proxies_best_idx]
+    # Instead of detecting the format of the user input chromosomes in the score file, just throw both 'chr#' and plain '#' formats at the wall and one will work.
+    if(geno_files_type=='bgen') { writeLines(proxy_dt[,paste0(c(chr,chr_n),':', pos,'-', pos)], filter_ranges_fnm)
+    } else                      { writeLines(proxy_dt[,paste0(c(chr,chr_n),'\t',pos,'\t',pos)], filter_ranges_fnm) }
 
-    score_dt <- merge(score_dt,proxies_best,all=T)
+    proxies_found_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.pvar')
 
-    proxies_not_found <- fsetdiff(vars_not_found[,.(chr,       pos,       ref,       alt       )],
-                                   proxies_found[,.(chr=og_chr,pos=og_pos,ref=og_ref,alt=og_alt)])
+    message('\nChecking for ~proxy~ variants in the geno_files...')
+    if(!all(file.exists(proxies_found_fnms))) mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, FUN=var_extraction, mc.cores=args$threads)
+
+    proxies_found <- do.call(rbind, proxies_found_fnms |> lapply(fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+    proxies_found[, chr_in_geno_format := chr][, chr := paste0('chr',chr) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # proxy_dt always has chr prefix, but genotype_data might not
+
+    if(nrow(proxies_found)==0) { # May happen if none of the proxies LDproxy found are present in the geno_files
+      proxies_not_found <- vars_not_found
+    } else {
+      proxies_found <- merge(proxies_found,proxy_dt) # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
+      proxies_best_idx <- proxies_found[, .I[which.max(R2)], by=.(chr_og,pos_og,ref_og,alt_og)]$V1
+      proxies_best <- proxies_found[proxies_best_idx][, chr := chr_in_geno_format]
+
+      score_dt2 <- proxies_best[
+                     ][score_dt, on=c(chr_og='chr', pos_og='pos', ref_og='ref', alt_og='alt') # merge proxies to their original variants
+                     ][is.na(chr), `:=`(chr=chr_og, pos=pos_og, ref=ref_og, alt=alt_og, ea_og=ea)
+                   ]
+
+      proxies_not_found <- fsetdiff(vars_not_found[,.(chr,       pos,       ref,       alt       )],
+                                     proxies_found[,.(chr=chr_og,pos=pos_og,ref=ref_og,alt=alt_og)])
+    }
   }
-  if(nrow(proxies_not_found)>0) message('\x1b[31mCould not find proxies in the geno_files for \x1b[33m', nrow(proxies_not_found),'/',nrow(vars_not_found),'\x1b[31m of the score_file variants which needed proxies:\x1b[m\n', paste(capture.output(proxies_not_found),collapse='\n'), '\n\x1b[31mWarning: these variants will be omitted from the PRS calculations!\x1b[m\nIf you do not want these variants to be omitted, consider decreasing --ldlink_r2 or increasing --ldlink_winsize.\n')
+
+  if(nrow(proxies_not_found)>0) message('\x1b[31mDid not find proxies in the geno_files for \x1b[33m', nrow(proxies_not_found),'/',nrow(vars_not_found),'\x1b[31m of the score_file variants which needed proxies:\x1b[m\n', paste(capture.output(proxies_not_found),collapse='\n'), '\n\x1b[31mWarning: these variants will be omitted from the PRS calculations!\x1b[m\nIf you do not want these variants to be omitted, consider decreasing --ldlink_r2 or increasing --ldlink_winsize.\n')
+
+  # TODO if I ever feel like writing a more detailed message about multiallelic variants
+  #n_multiallelics <- proxies_not_found[, mapply(chr,pos, FUN=\(c,p) nrow(score_dt[c==chr & p==pos]))] > 1
+  #if(n_multiallelics>0) { }
+} else { # --ldlink_token not provided
+  proxies_not_found <- vars_not_found
+  if(nrow(proxies_not_found)>0) message('\x1b[31mDid not find proxies in the geno_files for \x1b[33m', nrow(proxies_not_found),'/',nrow(vars_not_found),'\x1b[31m of the score_file variants which needed proxies:\x1b[m\n', paste(capture.output(proxies_not_found),collapse='\n'), '\n\x1b[31mWarning: these variants will be omitted from the PRS calculations!\x1b[m.\n')
 }
 
 
