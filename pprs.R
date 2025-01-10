@@ -223,8 +223,10 @@ vars_found_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',
 message('Checking for variants in the score_file missing from the geno_files...')
 mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
-vars_found     <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
-vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
+vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+if(nrow(vars_found)>0) {
+  vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
+} else { vars_not_found <- data.table() }
 
 if(nrow(vars_not_found)==nrow(score_dt) || !any(vars_found$chr %in% score_dt$chr)) { # seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
   unlink(vars_found_fnms)
@@ -246,55 +248,60 @@ if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
   if(nrow(vars_not_found)>100 && is.null(args$ldlink_yes_really)) stop('That\'s a lot of variants to find proxies for! Consider limiting the number of variants used to calculate your PRS by setting a p-value threshold.\nIf you really need all these proxies, please contact LDlink support at \x1b[34mNCILDlinkWebAdmin@mail.nih.gov\x1b[m to let them know you\'re planning to make a large number of API calls. If they give you the O.K. you can run this again with "--ldlink_yes_really" to skip this error message.')
 
   ## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
-                  proxy_output_fnm <- paste0(args$scratch_folder,'/proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(vars_not_found$chrposid,args$ldlink_pop,args$ldlink_r2,args$ldlink_winsize)),'.txt')
+                ldproxy_result_fnm <- paste0(args$scratch_folder,'/combined_query_snp_list_',args$ldlink_genome,'.txt') # LDproxy_batch() always writes to a file of this name
+                  proxy_output_fnm <- paste0(args$scratch_folder,'/proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(vars_not_found$chrposid,args$ldlink_pop,args$ldlink_r2,args$ldlink_winsize)),'.txt') # Better more specific filename that won't get overwritten in future runs on different data.
   if(!file.exists(proxy_output_fnm)) {
     old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
     LDproxy_batch(unique(vars_not_found$chrposid), pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
     old_wd |> setwd()
-    file.rename(paste0(args$scratch_folder,'/combined_query_snp_list_',args$ldlink_genome,'.txt'), proxy_output_fnm)
+    if(file.exists(ldproxy_result_fnm)) file.rename(ldproxy_result_fnm, proxy_output_fnm) # Renaming so that the file doesn't get overwritten in future runs
   }
 
-  proxy_dt <- fread(proxy_output_fnm) |> suppressWarnings()
+  if(file.exists(proxy_output_fnm)) {
+    proxy_dt <- fread(proxy_output_fnm) |> suppressWarnings()
   
-  proxy_dt <- proxy_dt[
-    ][R2 > args$ldlink_r2
-    ][!grepl('-',Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
-  
-    ][, chr := sub(':.*','',Coord)
-    ][, pos := sub('.*:','',Coord) |> as.integer()
-    ][, ref := sub('\\(','',tstrsplit(Alleles,'/')[[1]])
-    ][, alt := sub('\\)','',tstrsplit(Alleles,'/')[[2]])
-    ][, chr_n := sub('^chr','',chr)
-  ]
+    proxy_dt <- proxy_dt[
+      ][R2 > args$ldlink_r2
+      ][!grepl('-',Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
 
-  proxy_dt <- merge(proxy_dt,
-    vars_not_found[, .(chr_og=chr, pos_og=pos, ref_og=ref, alt_og=alt, ea_og=ea, chrposid)],
-    all.x=T, allow.cartesian=T,                          by.x='query_snp', by.y='chrposid',
-  ) #        allow.cartesian=T in case of multiallelic variants in the score file.
+      ][, chr := sub(':.*','',Coord)
+      ][, pos := sub('.*:','',Coord) |> as.integer()
+      ][, ref := sub('\\(','',tstrsplit(Alleles,'/')[[1]])
+      ][, alt := sub('\\)','',tstrsplit(Alleles,'/')[[2]])
+      ][, chr_n := sub('^chr','',chr)
+    ]
 
-  # LDproxy only takes chr:pos, no alleles.
-  # We need to ensure our alleles match what LDproxy thinks is the ref/alt for that position, and keep only those rows.
-  # If we don't do this, consider a score file with two variants having the same position, but different alleles.
-  #   The same proxies would be found for both, or one would be found as the proxy for the other,
-  #     which would be bad because then there would be perfectly duplicate rows in the score file,
-  #     meaning the variant would unfairly contribute to the score multiple times.
-  #   This is a reasonable (albeit rare) case. Different alleles in a multiallelic site could all have different effects.
-  #     Or, one could  simply be lift over genomic coords and discover that a site is now multiallic in the new reference genome, but you don't want to have to choose just one of the multi-alleles.
-  #   Relatedly, the same proxy could be found for two variants at different position, but presumably this is okay.
-  #     If so, this is more of an issue with the score_file (the variants should maybe be LD-pruned).
-  proxy_dt <- proxy_dt[
-    ][ mapply(Correlated_Alleles, ref_og, alt_og, FUN= \(as, ref_og, alt_og) {
-         as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
-         as[1]==ref_og & as[3]==alt_og |
-         as[3]==ref_og & as[1]==alt_og
-       })
+    proxy_dt <- merge(proxy_dt,
+      vars_not_found[, .(chr_og=chr, pos_og=pos, ref_og=ref, alt_og=alt, ea_og=ea, chrposid)],
+      all.x=T, allow.cartesian=T,                          by.x='query_snp', by.y='chrposid',
+    ) #        allow.cartesian=T in case of multiallelic variants in the score file.
 
-    # Figure out which allele of the proxy corresponds to the effect allele of the original variant
-    ][, ea := mapply(Correlated_Alleles, ea_og, FUN = \(as, ea_og) {
-                as <- strsplit(as, ',|=')[[1]]
-                if(as[1]==ea_og) as[2] else as[4]
-              })
-  ]
+    # LDproxy only takes chr:pos, no alleles.
+    # We need to ensure our alleles match what LDproxy thinks is the ref/alt for that position, and keep only those rows.
+    # If we don't do this, consider a score file with two variants having the same position, but different alleles.
+    #   The same proxies would be found for both, or one would be found as the proxy for the other,
+    #     which would be bad because then there would be perfectly duplicate rows in the score file,
+    #     meaning the variant would unfairly contribute to the score multiple times.
+    #   This is a reasonable (albeit rare) case. Different alleles in a multiallelic site could all have different effects.
+    #     Or, one could  simply be lift over genomic coords and discover that a site is now multiallic in the new reference genome, but you don't want to have to choose just one of the multi-alleles.
+    #   Relatedly, the same proxy could be found for two variants at different position, but presumably this is okay.
+    #     If so, this is more of an issue with the score_file (the variants should maybe be LD-pruned).
+    proxy_dt <- proxy_dt[
+      ][ mapply(Correlated_Alleles, ref_og, alt_og, FUN= \(as, ref_og, alt_og) {
+           as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
+           as[1]==ref_og & as[3]==alt_og |
+           as[3]==ref_og & as[1]==alt_og
+         })
+
+      # Figure out which allele of the proxy corresponds to the effect allele of the original variant
+      ][, ea := mapply(Correlated_Alleles, ea_og, FUN = \(as, ea_og) {
+                  as <- strsplit(as, ',|=')[[1]]
+                  if(as[1]==ea_og) as[2] else as[4]
+                })
+    ]
+  } else { # !file.exists(proxy_output_fnm)
+    proxy_dt <- data.table() # empty
+  }
 
   if(nrow(proxy_dt)==0) { # May happen if LDproxy found proxies for the wrong variant, i.e. for a variant that doesn't match our score_file variant's alleles.
     proxies_not_found <- vars_not_found
