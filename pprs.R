@@ -382,7 +382,7 @@ if(!file.exists(                                   geno_subset_file)) {
       seqClose(gds)
       ' '
     }
-  system(cmd, ignore.stderr=T, ignore.stdout=T)
+  system(cmd, ignore.stderr=T)
 }}
 
 message('Extracting genotype data...')
