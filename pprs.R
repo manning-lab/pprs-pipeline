@@ -224,11 +224,11 @@ message('Checking for variants in the score_file missing from the geno_files...'
 mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
 vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
-if(nrow(vars_found)>0) {
+if(nrow(vars_found)>0 && all(vars_found$chr %in% score_dt$chr)) { # PLINK & seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
   vars_not_found <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,alt)]) # Will count as not found if ref/alt don't match
-} else { vars_not_found <- data.table() }
+} else { vars_not_found <- score_dt } # TODO messy way of doing things
 
-if(nrow(vars_not_found)==nrow(score_dt) || !any(vars_found$chr %in% score_dt$chr)) { # seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
+if(nrow(vars_not_found)==nrow(score_dt)) {
   unlink(vars_found_fnms)
   stop('No IDs from score_file were found in geno_files! This might be caused by:
         1. Chromosome naming mismatch between your score file and the geno type data, e.g. "1" vs. "chr1".
