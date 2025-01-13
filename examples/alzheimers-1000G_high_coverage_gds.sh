@@ -1,7 +1,7 @@
 Rscript ../pprs.R "
   --geno_files data/*.gds
 
-  --score_file ../score_files/alzheimers.csv
+  --score_file score_files/alzheimers.csv
 
   --score_file_chr_col Chr_n
   --score_file_pos_col Pos
