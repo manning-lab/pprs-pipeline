@@ -1,8 +1,7 @@
-deps <- c('data.table','LDlinkR','parallel','XML') 
+deps <- c('data.table','digest','parallel','XML') 
 install.packages(deps[lengths(sapply(deps,find.package,quiet=T))==0], repos='https://cloud.r-project.org')
 
 library(data.table)
-library(LDlinkR)
 library(parallel)
 library(XML)
 
@@ -52,10 +51,11 @@ get_seqarray <- \() { if(!require("BiocManager",quietly=T)) install.packages("Bi
 # Default arguments
 args <- list()
 args$scratch_folder <- 'scratch'
-args$ldlink_winsize <- 100000
-args$ldlink_genome <- 'grch38_high_coverage'
-args$ldlink_pop <- 'no --ldlink_pop argument provided!'
-args$ldlink_r2 <- 0.8
+args$proxy_geno_file <- 'data/1kG_plink2/all_hg38'
+args$proxy_sample_ids <- 'TODO'
+args$proxy_search_winsize_kb <- '100'
+args$proxy_r2_cutoff <- '0.8'
+args$plink2_memory_mb <- 8000
 args$threads <- 1
 args$output_fnm <- 'my_results.txt'
 args$bcftools_exe <- if(Sys.which('bcftools')=='') './bcftools/bcftools'      else Sys.which('bcftools')
@@ -68,7 +68,7 @@ for(piece in pieces) { parts <- unlist(tstrsplit(piece,' |=')); args[[parts[[1]]
 args <- lapply(args, \(x) x[x!=''])
 
 # --- Input validation ---
-recognized_args <- c('geno_files','sample_file','score_file','ldlink_token','ldlink_pop','ldlink_r2','ldlink_genome','ldlink_winsize','ldlink_yes_really','scratch_folder','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
+recognized_args <- c('geno_files','sample_file','score_file','scratch_folder','proxy_geno_file','proxy_sample_ids','proxy_search_winsize_kb','proxy_r2_cutoff','plink2_memory_mb','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
 if(any(names(args) %ni% recognized_args)) stop('Unrecognized argument(s):', paste0(' --',setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
@@ -122,7 +122,7 @@ if(all(grepl('bgen$|bgi$',args$geno_files))) {
   args$geno_files <- unique(sub('.bed$|.bim$|.fam$','',args$geno_files)) # PLINK only takes the file prefix
   geno_files_type <- 'plink1'
 } else if(all(grepl('pgen$|pvar$|psam$|bim$|fam$',args$geno_files))) {
-  args$geno_files <- unique(sub('pgen$|pvar$|psam$|bim$|fam$','',args$geno_files)) # PLINK only takes the file prefix
+  args$geno_files <- unique(sub('.pgen$|.pvar$|.psam$|.bim$|.fam$','',args$geno_files)) # PLINK only takes the file prefix
   geno_files_type <- 'plink2'
 } else if(all(grepl('gds$',args$geno_files))) {
   geno_files_type <- 'gds'
@@ -148,6 +148,7 @@ if(length(score_colnms_not_found)>0) stop('Some columns were not found in the sc
 message('Using score file columns:\n',sprintf('%10s: "%s"\n',names(score_colnms),score_colnms))
 
 score_dt <- fread(args$score_file)[,..score_colnms] |> setnames(names(score_colnms))
+score_dt[, chr_n := as.numeric(sub('chr','',chr))]
 
 if(score_dt[, !is.integer(chr) & !is.character(chr)]) message('Warning: score file\'s chromosome column is not character or integer type which is suspicious. Here is a sample: ',        paste(head(score_dt$chr),collapse=' '))
 if(score_dt[, !is.integer(pos)                     ]) message('Warning: score file\'s position column is not integer type which is suspicious. Here is a sample: ',                       paste(head(score_dt$pos),collapse=' '))
@@ -155,20 +156,6 @@ if(score_dt[, any(grepl('[^ATCGNatcgn]', ref))     ]) message('Warning: score fi
 if(score_dt[, any(grepl('[^ATCGNatcgn]', alt))     ]) message('Warning: score file\'s alternate allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ', paste(head(score_dt$alt),collapse=' '))
 if(score_dt[, any(grepl('[^ATCGNatcgn]', ea ))     ]) message('Warning: score file\'s effect allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ',    paste(head(score_dt$ea ),collapse=' '))
 if(score_dt[,!all(sapply(.SD,is.numeric)), .SDcols=patterns('weights')]) stop('Score file weights columns do not contain all-numeric values! Here is a sample:\n', paste(collapse='\n',capture.output(score_dt[,.SD,.SDcols=patterns('weights')])))
-
-## LDlink inputs
-if(is.null(args$ldlink_token)) {
-  message('\x1b[31mNo LDlink API token provided\x1b[m, so no proxies will be gotten for missing variants.')
-} else {
-  invalid_pop_codes <- args$ldlink_pop[args$ldlink_pop %ni% list_pop()$pop_code]
-  if(length(invalid_pop_codes)>0) {
-    message('Error: Invalid LDlink population code(s): ', paste(invalid_pop_codes,collapse=' '),'\n',
-      'Available populations listed below. You can use more than one -- but LD calculation will be slower.\n',
-      paste(capture.output(list_pop()), collapse = '\n'))
-    stop('^^')
-  }
-}
-if(args$ldlink_genome %ni% c('grch37','grch38','grch38_high_coverage')) stop('--ldlinkg_genome must be one of: grch37 grch38 grch38_high_coverage')
 
 # --- Finished input validation ---
 
@@ -180,8 +167,7 @@ filter_ranges_fnm <- file.path(args$scratch_folder,'filter_ranges.txt')
 if(geno_files_type=='bgen') { writeLines(score_dt[,paste0(chr,':', pos,'-', pos)], filter_ranges_fnm)
 } else                      { writeLines(score_dt[,paste0(chr,'\t',pos,'\t',pos)], filter_ranges_fnm) }
 
-var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm) {
-if(!file.exists(                                  output_fnm)) {
+var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm, geno_files_type) {
   cmd <-
     if(geno_files_type=='bgen') paste(
       args$bgenix_exe, '-list -g', geno_file, # -list Only list variant info, no genotype data
@@ -200,28 +186,31 @@ if(!file.exists(                                  output_fnm)) {
       args$plink2_exe, '--bfile', geno_file,
       '--rm-dup force-first', # If dups, PLINK errors unless this is here.
       '--extract bed1', filter_ranges_fnm,
-      '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm) # PLINK automatically adds '.pvar' to the name
+      '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm), # PLINK automatically adds '.pvar' to the name
+      ' 2>&1 >/dev/null'
     )
     else if(geno_files_type=='plink2') paste(
       args$plink2_exe, '--pfile', geno_file,
       '--rm-dup force-first',
       '--extract bed1', filter_ranges_fnm,
-      '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm)
+      '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm),
+      ' 2>&1 >/dev/null'
     )
     else if(geno_files_type=='gds') {
       ranges <- fread(filter_ranges_fnm, col.names=c('chr','start','end'))
       gds <- seqOpen(geno_file)
-      seqSetFilterPos(gds, ranges$chr, ranges$start)
+      seqSetFilterPos(gds, ranges$chr, ranges$start, verbose=F)
       fwrite(seqGetData(gds, c('chromosome','position','annotation/id','$ref','$alt')), output_fnm)
       seqClose(gds)
       ' ' # Dummy cmd
     }
   system(cmd, ignore.stderr=T)
-}}
+  # TODO fread() the output_fnm and rewrite it back out w/ nicer colnames so I don't have to specify col.names= every time I fread it later
+}
 vars_found_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files),'.pvar')
 
 message('Checking for variants in the score_file missing from the geno_files...')
-mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, FUN=var_extraction, mc.cores=args$threads) |> invisible()
+mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, geno_files_type, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
 vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
 if(nrow(vars_found)>0 && all(vars_found$chr %in% score_dt$chr)) { # PLINK & seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
@@ -238,113 +227,100 @@ if(nrow(vars_not_found)==nrow(score_dt)) {
 }
 
 vars_not_found <- merge(vars_not_found,score_dt) # We'll need the effect allele (ea) column in vars_not_found later, to determine which proxy allele corresponds to the original effect allele.
-vars_not_found[, chrposid := paste0('chr',chr,':',pos) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # LDproxy only takes rsIDs or chr:pos IDs
+proxies_not_found <- vars_not_found
 
-message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.', if(is.null(args$ldlink_token)) ' \x1b[31mWhich will be omitted because no --ldlink_token was provided for getting proxies!!\x1b[m')
+message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.')
 
 
 # Find proxies for score file variants mising from the genotype data
-if(!is.null(args$ldlink_token) & nrow(vars_not_found)>0) {
-  if(nrow(vars_not_found)>100 && is.null(args$ldlink_yes_really)) stop('That\'s a lot of variants to find proxies for! Consider limiting the number of variants used to calculate your PRS by setting a p-value threshold.\nIf you really need all these proxies, please contact LDlink support at \x1b[34mNCILDlinkWebAdmin@mail.nih.gov\x1b[m to let them know you\'re planning to make a large number of API calls. If they give you the O.K. you can run this again with "--ldlink_yes_really" to skip this error message.')
+# TODO create 'eur_sample_ids.txt' 'afr_sample_ids.txt' etc. for later
+if(nrow(vars_not_found)>0) {
 
-  ## Don't want to ask the busy LDproxy server the same thing twice, so give the output a unique filename based on the inputs and check if it already exists before calling LDproxy.
-                ldproxy_result_fnm <- paste0(args$scratch_folder,'/combined_query_snp_list_',args$ldlink_genome,'.txt') # LDproxy_batch() always writes to a file of this name
-                  proxy_output_fnm <- paste0(args$scratch_folder,'/proxy-',basename(args$score_file),'-',args$ldlink_pop,'-',digest::digest(c(vars_not_found$chrposid,args$ldlink_pop,args$ldlink_r2,args$ldlink_winsize)),'.txt') # Better more specific filename that won't get overwritten in future runs on different data.
-  if(!file.exists(proxy_output_fnm)) {
-    old_wd <- setwd(args$scratch_folder) # LDproxy can only output in working directory, but we want it in the scratch dir
-    LDproxy_batch(unique(vars_not_found$chrposid), pop=args$ldlink_pop, token=args$ldlink_token, genome_build=args$ldlink_genome, append=T, win_size=args$ldlink_winsize)
-    old_wd |> setwd()
-    if(file.exists(ldproxy_result_fnm)) file.rename(ldproxy_result_fnm, proxy_output_fnm) # Renaming so that the file doesn't get overwritten in future runs
+  # If default 1kG proxy_geno_file and it's not already present, download it.
+  if(args$proxy_geno_file=='data/1kG_plink2/all_hg38' & !file.exists(paste0(args$proxy_geno_file,'.pgen'))) {
+      message('Downloading PLINK2 format 1000 Genomes data (https://www.cog-genomics.org/plink/2.0/resources) to use as a reference panel to find proxies...\nNote: this download will consume ~11GB of disk space.')
+      d <- dirname(args$proxy_geno_file)
+      d |> dir.create(recursive=T)
+      download.file('https://www.dropbox.com/scl/fi/u5udzzaibgyvxzfnjcvjc/hg38_corrected.psam?rlkey=oecjnk4vmbhc8b1p202l0ih4x&dl=1', file.path(d,'all_hg38.psam'    ))
+      download.file('https://www.dropbox.com/s/ngbo2xm5ojw9koy/all_hg38_noannot.pvar.zst?dl=1',                                      file.path(d,'all_hg38.pvar.zst'))
+      download.file('https://www.dropbox.com/s/j72j6uciq5zuzii/all_hg38.pgen.zst?dl=1',                                              file.path(d,'all_hg38.pgen.zst'))
+      system(paste('plink2 --zst-decompress',file.path(d,'all_hg38.pgen.zst'),file.path(d,'all_hg38.pgen')))
+      system(paste('plink2 --zst-decompress',file.path(d,'all_hg38.pvar.zst'),file.path(d,'all_hg38.pvar')))
+      unlink(file.path(d,'all_hg38.pgen.zst'))
+      unlink(file.path(d,'all_hg38.pvar.zst'))
   }
 
-  if(file.exists(proxy_output_fnm)) {
-    proxy_dt <- fread(proxy_output_fnm) |> suppressWarnings()
-  
-    proxy_dt <- proxy_dt[
-      ][R2 > args$ldlink_r2
-      ][!grepl('-',Alleles) # TODO ignoring these 1-bp indels b/c idk how to handle them
+  if(geno_files_type=='bgen') { writeLines(vars_not_found[,paste0(chr_n,':', pos,'-', pos)], filter_ranges_fnm)
+  } else                      { writeLines(vars_not_found[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm) }
+  var_extraction(args$proxy_geno_file, filter_ranges_fnm, 'vars_found_in_proxy_geno_file.pvar', 'plink2')
+  vars_proxy_ref_panel_has <-
+    fread('vars_found_in_proxy_geno_file.pvar', col.names=c('chr_n','pos','id','ref','alt')) |>
+    merge(score_dt, by=c('chr_n','pos','ref','alt')) # Merge into score_dt to eliminate multiallelics, since var_extraction only filters by chr:pos
+  vars_proxy_ref_panel_hasnt <- score_dt[!rbind(vars_proxy_ref_panel_has,vars_found,fill=T), on=c('chr','pos','ref','alt')]
 
-      ][, chr := sub(':.*','',Coord)
-      ][, pos := sub('.*:','',Coord) |> as.integer()
-      ][, ref := sub('\\(','',tstrsplit(Alleles,'/')[[1]])
-      ][, alt := sub('\\)','',tstrsplit(Alleles,'/')[[2]])
-      ][, chr_n := sub('^chr','',chr)
-    ]
+  if(nrow(vars_proxy_ref_panel_hasnt)>0) message('\x1b[33m',nrow(vars_proxy_ref_panel_hasnt),'/',nrow(vars_not_found),'\x1b[m were not found in the proxy_geno_file either.')
+  if(nrow(vars_proxy_ref_panel_hasnt) != nrow(vars_not_found)) {
+    vars_to_find_proxies_for_fnm <- paste0(
+      args$scratch_folder,'/vars_to_find_proxies_for',
+      '-r2',args$proxy_r2_cutoff,
+      '-w', args$proxy_search_winsize,
+      '-', digest::digest(vars_not_found, algo='md5'),
+      # TODO args$proxy_geno_file too
+      '.txt')
+    writeLines(vars_proxy_ref_panel_has[,paste0(sub('chr','',chr),':',pos,':',ref,':',alt)], vars_to_find_proxies_for_fnm) # Hardcoded no-chr-prefix naming for the PLINK2 1kG files.
+    proxy_output_fnm <- paste0(vars_to_find_proxies_for_fnm,'.vcor')
+    message('Finding possible proxies in proxy_geno_file, within ',args$proxy_search_winsize_kb,'kb windows and with r^2 > ',args$proxy_r2_cutoff,'...')
+    if(!file.exists(proxy_output_fnm)) system(paste(
+      args$plink2_exe, '--pfile', args$proxy_geno_file,
+      '--r2-unphased cols=+ref,+alt1,+maj,-id',
+        '--ld-window-kb', args$proxy_search_winsize,
+        '--ld-window-r2', args$proxy_r2_cutoff,
+        '--ld-snp-list', vars_to_find_proxies_for_fnm,
+        '--memory', args$plink2_memory_mb,
+        '--out', vars_to_find_proxies_for_fnm
+    ), ignore.stdout=T)
 
-    proxy_dt <- merge(proxy_dt,
-      vars_not_found[, .(chr_og=chr, pos_og=pos, ref_og=ref, alt_og=alt, ea_og=ea, chrposid)],
-      all.x=T, allow.cartesian=T,                          by.x='query_snp', by.y='chrposid',
-    ) #        allow.cartesian=T in case of multiallelic variants in the score file.
+    proxy_dt <- fread(proxy_output_fnm, col.names=c('chr_n','pos','ref','alt','maj','chr_n_proxy','pos_proxy','ref_proxy','alt_proxy','maj_proxy','r2'))
 
-    # LDproxy only takes chr:pos, no alleles.
-    # We need to ensure our alleles match what LDproxy thinks is the ref/alt for that position, and keep only those rows.
-    # If we don't do this, consider a score file with two variants having the same position, but different alleles.
-    #   The same proxies would be found for both, or one would be found as the proxy for the other,
-    #     which would be bad because then there would be perfectly duplicate rows in the score file,
-    #     meaning the variant would unfairly contribute to the score multiple times.
-    #   This is a reasonable (albeit rare) case. Different alleles in a multiallelic site could all have different effects.
-    #     Or, one could  simply be lift over genomic coords and discover that a site is now multiallic in the new reference genome, but you don't want to have to choose just one of the multi-alleles.
-    #   Relatedly, the same proxy could be found for two variants at different position, but presumably this is okay.
-    #     If so, this is more of an issue with the score_file (the variants should maybe be LD-pruned).
-    proxy_dt <- proxy_dt[
-      ][ mapply(Correlated_Alleles, ref_og, alt_og, FUN= \(as, ref_og, alt_og) {
-           as <- strsplit(as, ',|=')[[1]] # 'A=C,T=G' -> list(A,C,T,G). A&T would be query variant's alleles, C&G the proxy's.
-           as[1]==ref_og & as[3]==alt_og |
-           as[3]==ref_og & as[1]==alt_og
-         })
-
-      # Figure out which allele of the proxy corresponds to the effect allele of the original variant
-      ][, ea := mapply(Correlated_Alleles, ea_og, FUN = \(as, ea_og) {
-                  as <- strsplit(as, ',|=')[[1]]
-                  if(as[1]==ea_og) as[2] else as[4]
-                })
-    ]
-  } else { # !file.exists(proxy_output_fnm)
-    proxy_dt <- data.table() # empty
-  }
-
-  if(nrow(proxy_dt)==0) { # May happen if LDproxy found proxies for the wrong variant, i.e. for a variant that doesn't match our score_file variant's alleles.
-    proxies_not_found <- vars_not_found
-  } else {
-    # Instead of detecting the format of the user input chromosomes in the score file, just throw both 'chr#' and plain '#' formats at the wall and one will work.
-    if(geno_files_type=='bgen') { writeLines(proxy_dt[,paste0(c(chr,chr_n),':', pos,'-', pos)], filter_ranges_fnm)
-    } else                      { writeLines(proxy_dt[,paste0(c(chr,chr_n),'\t',pos,'\t',pos)], filter_ranges_fnm) }
-
-    proxies_found_fnms <- paste0(args$scratch_folder,'/',basename(proxy_output_fnm),'-',basename(args$geno_files),'.pvar')
-
-    message('\nChecking for ~proxy~ variants in the geno_files...')
-    if(!all(file.exists(proxies_found_fnms))) mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, FUN=var_extraction, mc.cores=args$threads)
-
-    proxies_found <- do.call(rbind, proxies_found_fnms |> lapply(fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
-    proxies_found[, chr_in_geno_format := chr][, chr := paste0('chr',chr) |> sub(pattern='chrchr',replacement='chr')] |> invisible() # proxy_dt always has chr prefix, but genotype_data might not
-
-    if(nrow(proxies_found)==0) { # May happen if none of the proxies LDproxy found are present in the geno_files
+    if(nrow(proxy_dt)==0) {
       proxies_not_found <- vars_not_found
     } else {
-      proxies_found <- merge(proxies_found,proxy_dt) # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
-      proxies_best_idx <- proxies_found[, .I[which.max(R2)], by=.(chr_og,pos_og,ref_og,alt_og)]$V1
-      proxies_best <- proxies_found[proxies_best_idx][, chr := chr_in_geno_format]
+      proxy_dt <- score_dt[,.(chr_n,chr,pos,ref,alt,ea)][proxy_dt,on=c('chr_n','pos','ref','alt')] # Merge to score_dt by chr_n, so that we can recover chr, whose names should agree with the geno_files.
+      proxy_dt[, ea_proxy := fifelse((maj==ea & maj_proxy==ref_proxy), ref_proxy, alt_proxy)]
 
-      score_dt2 <- proxies_best[
-                     ][score_dt, on=c(chr_og='chr', pos_og='pos', ref_og='ref', alt_og='alt') # merge proxies to their original variants
-                     ][is.na(chr), `:=`(chr=chr_og, pos=pos_og, ref=ref_og, alt=alt_og, ea_og=ea)
-                   ]
+      if(nrow(proxy_dt)==0) { proxies_not_found <- vars_not_found } else {
+        if(geno_files_type=='bgen') { writeLines(proxy_dt[,paste0(chr,':', pos_proxy,'-', pos_proxy)], filter_ranges_fnm)
+        } else                      { writeLines(proxy_dt[,paste0(chr,'\t',pos_proxy,'\t',pos_proxy)], filter_ranges_fnm) }
 
-      proxies_not_found <- fsetdiff(vars_not_found[,.(chr,       pos,       ref,       alt       )],
-                                     proxies_found[,.(chr=chr_og,pos=pos_og,ref=ref_og,alt=alt_og)])
+        # FIXME name with a hash in it because as of now cache not invalidated if winsize or r2 cutoff changed
+        proxies_found_fnms <- paste0(args$scratch_folder,'/proxies_found',basename(args$geno_files),'.pvar')
+
+        message('Checking which of those proxies from the proxy_geno_file also exist in the geno_files...')
+        mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, geno_files_type, FUN=var_extraction, mc.cores=args$threads)
+
+        proxies_found <- do.call(rbind, proxies_found_fnms |> lapply(fread, col.names=c('chr_proxy','pos_proxy','id_proxy','ref_proxy','alt_proxy'))) |> suppressWarnings()
+        proxies_found[, chr_n_proxy := as.numeric(sub('chr','',chr_proxy))] |> invisible() # proxy_dt always has no chr prefix because it's always from 1kG file, but genotype_data might have it
+
+        if(nrow(proxies_found)==0) { # May happen if none of the proxies are present in the geno_files
+          proxies_not_found <- vars_not_found
+        } else {
+          proxies_found <- proxy_dt[proxies_found, on=c('chr_n_proxy','pos_proxy','ref_proxy','alt_proxy')] # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
+          proxies_best_idx <- proxies_found[, .I[which.max(r2)], by=.(chr,pos,ref,alt)]$V1
+          proxies_best <- proxies_found[proxies_best_idx]
+
+          score_dt <- proxies_best[
+            ][score_dt, on=c('chr','pos','ref','alt') # merge proxies to their original variants
+            ][!is.na(chr_n_proxy), `:=`(chr=chr_proxy, pos=pos_proxy, ref=ref_proxy, alt=alt_proxy, ea=ea_proxy) # Replace original variants that needed proxies by their proxy
+          ]
+
+          proxies_not_found <- vars_not_found[!proxies_found, on=c('chr','pos','ref','alt')]
+        }
+      }
     }
   }
-
-  if(nrow(proxies_not_found)>0) message('\x1b[31mDid not find proxies in the geno_files for \x1b[33m', nrow(proxies_not_found),'/',nrow(vars_not_found),'\x1b[31m of the score_file variants which needed proxies:\x1b[m\n', paste(capture.output(proxies_not_found),collapse='\n'), '\n\x1b[31mWarning: these variants will be omitted from the PRS calculations!\x1b[m\nIf you do not want these variants to be omitted, consider decreasing --ldlink_r2 or increasing --ldlink_winsize.\n')
-
-  # TODO if I ever feel like writing a more detailed message about multiallelic variants
-  #n_multiallelics <- proxies_not_found[, mapply(chr,pos, FUN=\(c,p) nrow(score_dt[c==chr & p==pos]))] > 1
-  #if(n_multiallelics>0) { }
-} else { # --ldlink_token not provided
-  proxies_not_found <- vars_not_found
-  if(nrow(proxies_not_found)>0) message('\x1b[31mDid not find proxies in the geno_files for \x1b[33m', nrow(proxies_not_found),'/',nrow(vars_not_found),'\x1b[31m of the score_file variants which needed proxies:\x1b[m\n', paste(capture.output(proxies_not_found),collapse='\n'), '\n\x1b[31mWarning: these variants will be omitted from the PRS calculations!\x1b[m.\n')
 }
 
+message('\x1b[33m',nrow(proxies_not_found),'/',nrow(score_dt),"\x1b[m score_file variants had no candidate proxies found in the geno_files.")
 
 # Extract full genotype data for the variants in the --score_file.  
 geno_subset_file_paths <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files))
@@ -366,14 +342,16 @@ if(!file.exists(                                   geno_subset_file)) {
       '-Ob >', geno_subset_file # output compressed BCF format
     )
     else if(geno_files_type=='plink1') paste(
-      args$plink2, '--bfile', geno_file,
+      args$plink2_exe, '--bfile', geno_file,
       '--extract bed1', filter_ranges_fnm,
-      '--make-bed --out', geno_subset_file
+      '--make-bed --out', geno_subset_file,
+      ' 2>&1 >/dev/null'
     )
     else if(geno_files_type=='plink2') paste(
-      args4plink2, '--pfile', geno_file,
+      args$plink2_exe, '--pfile', geno_file,
       '--extract bed1', filter_ranges_fnm,
-      '--make-pgen --out', geno_subset_file
+      '--make-pgen --out', geno_subset_file,
+      ' 2>&1 >/dev/null'
     )
     else if(geno_files_type=='gds') {
       gds <- seqOpen(geno_file)
@@ -433,7 +411,28 @@ prs_file_paths <- file.path(args$scratch_folder, prs_files)
 prs_sums <- rbindlist(lapply(prs_file_paths,fread))[, lapply(.SD, sum), by='#IID'] # TODO: dup variants in a geno_file will be ignored. But dup variants ~across~ geno_files will get ~added~. Add a [!duplicated(.(chr,pos,ref,alt))] step here? Could save a user if they accidentally input the same chr's geno_file twice.
 
 fwrite(prs_sums, args$output_fnm)
-message('Done! PRS results file: ', args$output_fnm)
+message('\n\x1b[32mDone!\x1b[m PRS results file: ', args$output_fnm)
 
-# TODO: --q-score-range option useful for global PRS, see Kenny script for referene
-#   Although that could be easily implemented here in R by allowing the user to input an optional --score_file_p_col and --p-threshold(s). Tricky part would be to do good caching of var_extraction() & geno_extraction(), so maybe leaving it to plink is better?
+if(nrow(vars_not_found>0)) {
+  message('\n\x1b[31mSUMMARY OF OMITTED VARIANTS: \x1b[33m',nrow(proxies_not_found),'/',nrow(score_dt),'\x1b[m')
+  proxies_otherwise_not_found <- proxies_not_found[!vars_proxy_ref_panel_hasnt, on=c('chr_n','pos','ref','alt')][,chr_n:=NULL]
+
+  if(nrow(vars_proxy_ref_panel_hasnt )>0) message(
+    "\x1b[33m",nrow(vars_proxy_ref_panel_hasnt ),"/",nrow(vars_not_found),
+    "\x1b[31m score_file variants were not found in the geno_files nor proxy_geno_file\x1b[m:\n",
+    paste(capture.output(vars_proxy_ref_panel_hasnt ),collapse='\n'),
+    "\n\x1b[36mTo recover these, you'll need to provide a different --proxy_geno_file.\x1b[m\n"
+  )
+
+  if(nrow(proxies_otherwise_not_found)>0) message(
+    "\x1b[33m",nrow(proxies_otherwise_not_found),"/",nrow(vars_not_found),
+    "\x1b[31m score_file variants were not found besides\x1b[m:\n",
+    paste(capture.output(proxies_otherwise_not_found),collapse='\n'),
+    "\n\x1b[36mTo recover these, you'll need to provide either:",
+    "\n  1. Bigger --proxy_search_winsize (but it will take longer to calcualte)",
+    "\n  2. Lower  --proxy_r2_cufoff      (but your proxies may be less accurate)",
+    "\n  3. Some   --proxy_ref_panel_sample_ids to subset the reference panel to a population which more closely matches the population of your geno_files",
+    "\n  4. A new  --proxy_geno_file entirely.\x1b[m\n"
+  )
+
+}
