@@ -52,7 +52,6 @@ get_seqarray <- \() { if(!require("BiocManager",quietly=T)) install.packages("Bi
 args <- list()
 args$scratch_folder <- 'scratch'
 args$proxy_geno_file <- 'data/1kG_plink2/all_hg38'
-args$proxy_sample_ids <- 'TODO'
 args$proxy_search_winsize_kb <- '100'
 args$proxy_r2_cutoff <- '0.8'
 args$plink2_memory_mb <- 8000
@@ -68,11 +67,11 @@ for(piece in pieces) { parts <- unlist(tstrsplit(piece,' |=')); args[[parts[[1]]
 args <- lapply(args, \(x) x[x!=''])
 
 # --- Input validation ---
-recognized_args <- c('geno_files','sample_file','score_file','scratch_folder','proxy_geno_file','proxy_sample_ids','proxy_search_winsize_kb','proxy_r2_cutoff','plink2_memory_mb','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
+recognized_args <- c('geno_files','sample_file','score_file','scratch_folder','proxy_geno_file','proxy_sample_pop','proxy_search_winsize_kb','proxy_r2_cutoff','plink2_memory_mb','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
 if(any(names(args) %ni% recognized_args)) stop('Unrecognized argument(s):', paste0(' --',setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
-if(is.null(args$geno_files            )) stop('--geno_files is required!\nThis may be .vcf[.gz]/.bcf[.gz], .bgen, .bed+.bim+.fam, or .pgen+.pvar+.psam file(s).')
+if(is.null(args$geno_files            )) stop('--geno_files is required!\nThis may be .vcf[.gz]/.bcf[.gz], .gds, .bgen, .bed+.bim+.fam, or .pgen+.pvar+.psam file(s).')
 if(is.null(args$score_file            )) stop('--score_file is required!')
 if(is.null(args$score_file_chr_col    )) stop('--score_file_chr_col is required! This refers to the name or index of the chromosome column in your score file.\nThe chromosome format (e.g. "1" vs. "chr1") should match that in your --geno_files input.')
 if(is.null(args$score_file_pos_col    )) stop('--score_file_pos_col is required! This refers to the name or index of the position column in your score file.')
@@ -148,7 +147,7 @@ if(length(score_colnms_not_found)>0) stop('Some columns were not found in the sc
 message('Using score file columns:\n',sprintf('%10s: "%s"\n',names(score_colnms),score_colnms))
 
 score_dt <- fread(args$score_file)[,..score_colnms] |> setnames(names(score_colnms))
-score_dt[, chr_n := as.numeric(sub('chr','',chr))]
+score_dt[, chr_n := as.numeric(sub('chr','',chr))] |> invisible()
 
 if(score_dt[, !is.integer(chr) & !is.character(chr)]) message('Warning: score file\'s chromosome column is not character or integer type which is suspicious. Here is a sample: ',        paste(head(score_dt$chr),collapse=' '))
 if(score_dt[, !is.integer(pos)                     ]) message('Warning: score file\'s position column is not integer type which is suspicious. Here is a sample: ',                       paste(head(score_dt$pos),collapse=' '))
@@ -156,6 +155,23 @@ if(score_dt[, any(grepl('[^ATCGNatcgn]', ref))     ]) message('Warning: score fi
 if(score_dt[, any(grepl('[^ATCGNatcgn]', alt))     ]) message('Warning: score file\'s alternate allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ', paste(head(score_dt$alt),collapse=' '))
 if(score_dt[, any(grepl('[^ATCGNatcgn]', ea ))     ]) message('Warning: score file\'s effect allele column has non-nucleotide letters in it, which is suspicious. Here is a sample: ',    paste(head(score_dt$ea ),collapse=' '))
 if(score_dt[,!all(sapply(.SD,is.numeric)), .SDcols=patterns('weights')]) stop('Score file weights columns do not contain all-numeric values! Here is a sample:\n', paste(collapse='\n',capture.output(score_dt[,.SD,.SDcols=patterns('weights')])))
+
+# TODO some sort of check if proxy_gneo_file exists, and actually move the hardcoded 1kG download here as well.
+
+# TODO (maybe): all this is hardcoded for the 1kG data from the PLINK2 resources page as the proxy_geno_file
+plink_pop_flag <- ''
+valid_spops  <- sort(c('EUR','EAS','AMR','SAS','AFR'))
+valid_pops <- sort(c('GBR','FIN','CHS','PUR','CDX','CLM','IBS','PEL','PJL','KHV','ACB','GWD','ESN','BEB','MSL','STU','ITU','CEU','YRI','CHB','JPT','LWK','ASW','MXL','TSI','GIH'))
+if(is.null(args$proxy_sample_pop)) {
+  message('Not subsetting the proxy_geno_file samples (pooled sample population).')
+} else {
+  if(args$proxy_sample_pop %ni% union(valid_spops,valid_pops)) stop('Invalid sample population "',args$proxy_sample_pop,'" . Please choose one of:\nSuper-populations: ',paste(valid_spops,collapse=' '),'\nSub-populations: ',paste(valid_pops,collapse=' '))
+
+  message('Subsetting the proxy_geno_file samples by population: \x1b[36m', args$proxy_sample_pop,'\x1b[m')
+  if(args$proxy_sample_pop %in% valid_spops) plink_pop_flag <- paste('--keep-if SuperPop   "=="',args$proxy_sample_pop)
+  if(args$proxy_sample_pop %in% valid_pops ) plink_pop_flag <- paste('--keep-if Population "=="',args$proxy_sample_pop)
+}
+
 
 # --- Finished input validation ---
 
@@ -258,12 +274,14 @@ if(nrow(vars_not_found)>0) {
     merge(score_dt, by=c('chr_n','pos','ref','alt')) # Merge into score_dt to eliminate multiallelics, since var_extraction only filters by chr:pos
   vars_proxy_ref_panel_hasnt <- score_dt[!rbind(vars_proxy_ref_panel_has,vars_found,fill=T), on=c('chr','pos','ref','alt')]
 
+  # TODO what happens if a variant is monoallelic in chosen population? I'm guessing PLINK handles it w/o fuss, but just to make sure
   if(nrow(vars_proxy_ref_panel_hasnt)>0) message('\x1b[33m',nrow(vars_proxy_ref_panel_hasnt),'/',nrow(vars_not_found),'\x1b[m were not found in the proxy_geno_file either.')
   if(nrow(vars_proxy_ref_panel_hasnt) != nrow(vars_not_found)) {
     vars_to_find_proxies_for_fnm <- paste0(
       args$scratch_folder,'/vars_to_find_proxies_for',
-      '-r2',args$proxy_r2_cutoff,
-      '-w', args$proxy_search_winsize,
+      '-r2_',args$proxy_r2_cutoff,
+      '-win_', args$proxy_search_winsize,
+      '-pop_', args$proxy_sample_pop,
       '-', digest::digest(vars_not_found, algo='md5'),
       # TODO args$proxy_geno_file too
       '.txt')
@@ -272,6 +290,7 @@ if(nrow(vars_not_found)>0) {
     message('Finding possible proxies in proxy_geno_file, within ',args$proxy_search_winsize_kb,'kb windows and with r^2 > ',args$proxy_r2_cutoff,'...')
     if(!file.exists(proxy_output_fnm)) system(paste(
       args$plink2_exe, '--pfile', args$proxy_geno_file,
+      plink_pop_flag,
       '--r2-unphased cols=+ref,+alt1,+maj,-id',
         '--ld-window-kb', args$proxy_search_winsize,
         '--ld-window-r2', args$proxy_r2_cutoff,
@@ -420,7 +439,7 @@ if(nrow(vars_not_found>0)) {
   if(nrow(vars_proxy_ref_panel_hasnt )>0) message(
     "\x1b[33m",nrow(vars_proxy_ref_panel_hasnt ),"/",nrow(vars_not_found),
     "\x1b[31m score_file variants were not found in the geno_files nor proxy_geno_file\x1b[m:\n",
-    paste(capture.output(vars_proxy_ref_panel_hasnt ),collapse='\n'),
+    paste(capture.output(vars_proxy_ref_panel_hasnt[,chr_n:=NULL] ),collapse='\n'),
     "\n\x1b[36mTo recover these, you'll need to provide a different --proxy_geno_file.\x1b[m\n"
   )
 
@@ -431,8 +450,8 @@ if(nrow(vars_not_found>0)) {
     "\n\x1b[36mTo recover these, you'll need to provide either:",
     "\n  1. Bigger --proxy_search_winsize (but it will take longer to calcualte)",
     "\n  2. Lower  --proxy_r2_cufoff      (but your proxies may be less accurate)",
-    "\n  3. Some   --proxy_ref_panel_sample_ids to subset the reference panel to a population which more closely matches the population of your geno_files",
-    "\n  4. A new  --proxy_geno_file entirely.\x1b[m\n"
+    "\n  3. Other  --proxy_sample_pop     to subset the reference panel to a population which more closely matches the population of your geno_files",
+    "\n  4. A new  --proxy_geno_file      entirely.\x1b[m\n"
   )
 
 }
