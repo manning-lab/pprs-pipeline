@@ -51,7 +51,7 @@ get_seqarray <- \() { if(!require("BiocManager",quietly=T)) install.packages("Bi
 # Default arguments
 args <- list()
 args$scratch_folder <- 'scratch'
-args$proxy_geno_file <- 'data/1kG_plink2/all_hg38'
+args$proxy_geno_file <- ifelse(file.exists('examples'), 'examples/data/1kG_plink2/all_hg38', 'data/1kG_plink2/all_hg38')
 args$proxy_winsize_kb <- '100'
 args$proxy_r2_cutoff <- '0.8'
 args$memory_mb <- 8000
@@ -106,24 +106,24 @@ if(length(args$geno_files)==0) stop('Provided --geno_files do not exist!  \n(If 
 if(length(args$score_file)==0) stop('Provided --score_file does not exist!\n(If you\'re submitting a job on a compute cluster, you may need to specify absolute file paths.)')
 
 ## Detect --geno_file type (and --sample_file)
-if(all(grepl('bgen$|bgi$',args$geno_files))) {
+if(all(grepl('\\.bgen$|\\.bgi$',args$geno_files))) {
   if(is.null(args$sample_file)   ) stop('--sample_file is required since your --geno_files are .bgen format!')
   if( length(args$sample_file)==0) stop('Provided --sample_file does not exist!')
   # TODO would be good to detect index files and warn if not found
   args$geno_files <- args$geno_files[!grepl('bgi$',args$geno_files)] # Don't include index files
   geno_files_type <-'bgen' 
-} else if(all(grepl('bcf(.gz)?$|vcf(.gz)?$|tbi$|csi$',args$geno_files))) {
+} else if(all(grepl('\\.bcf(.gz)?$|\\.vcf(.gz)?$|\\.tbi$|\\.csi$',args$geno_files))) {
   # TODO would be good to detect index files and warn if not found
   if(all(grepl('bcf(.gz)?$|tbi$|csi$',args$geno_files))) geno_files_type <- 'bcf'
   if(all(grepl('vcf(.gz)?$|tbi$|csi$',args$geno_files))) geno_files_type <- 'vcf'
-  args$geno_files <- args$geno_files[!grepl('tbi$|csi$',args$geno_files)] # Don't include index files
+  args$geno_files <- args$geno_files[!grepl('\\.tbi$|\\.csi$',args$geno_files)] # Don't include index files
 } else if(all(grepl('bed$|bim$|fam$',args$geno_files))) {
-  args$geno_files <- unique(sub('.bed$|.bim$|.fam$','',args$geno_files)) # PLINK only takes the file prefix
+  args$geno_files <- unique(sub('\\.bed$|\\.bim$|\\.fam$','',args$geno_files)) # PLINK only takes the file prefix
   geno_files_type <- 'plink1'
-} else if(all(grepl('pgen$|pvar$|psam$|bim$|fam$',args$geno_files))) {
-  args$geno_files <- unique(sub('.pgen$|.pvar$|.psam$|.bim$|.fam$','',args$geno_files)) # PLINK only takes the file prefix
+} else if(all(grepl('\\.pgen$|\\.pvar$|\\.psam$|\\.bim$|\\.fam$',args$geno_files))) {
+  args$geno_files <- unique(sub('\\.pgen$|\\.pvar$|\\.psam$|\\.bim$|\\.fam$','',args$geno_files)) # PLINK only takes the file prefix
   geno_files_type <- 'plink2'
-} else if(all(grepl('gds$',args$geno_files))) {
+} else if(all(grepl('\\.gds$',args$geno_files))) {
   geno_files_type <- 'gds'
 } else { stop(paste(c('Input geno_files format is unsupported, or is a mix of different formats. Below is the list of detected geno_files:',args$geno_files),collapse='\n')) }
 message('Detected ',geno_files_type,' files:\n    ', paste(args$geno_files,collapse='\n    '), '\n')
@@ -253,7 +253,8 @@ message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs i
 if(nrow(vars_not_found)>0) {
 
   # If default 1kG proxy_geno_file and it's not already present, download it.
-  if(args$proxy_geno_file=='data/1kG_plink2/all_hg38' & !file.exists(paste0(args$proxy_geno_file,'.pgen'))) {
+  if(args$proxy_geno_file %in% c('data/1kG_plink2/all_hg38','examples/data/1kG_plink2/all_hg38') & !file.exists(paste0(args$proxy_geno_file,'.pgen'))) {
+      options(timeout = max(18000, getOption("timeout")))
       message('Downloading PLINK2 format 1000 Genomes data (https://www.cog-genomics.org/plink/2.0/resources) to use as a reference panel to find proxies...\nNote: this download will consume ~11GB of disk space.')
       d <- dirname(args$proxy_geno_file)
       d |> dir.create(recursive=T)
@@ -268,9 +269,10 @@ if(nrow(vars_not_found)>0) {
 
   if(geno_files_type=='bgen') { writeLines(vars_not_found[,paste0(chr_n,':', pos,'-', pos)], filter_ranges_fnm)
   } else                      { writeLines(vars_not_found[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm) }
-  var_extraction(args$proxy_geno_file, filter_ranges_fnm, 'vars_found_in_proxy_geno_file.pvar', 'plink2')
+  vars_in_proxy_geno_file_fnm <- paste0(args$scratch_folder,'/vars_in_proxy_geno_file.pvar') # FIXME better unique name that won't confict if running multiple instances of the pipeline concurrently
+  var_extraction(args$proxy_geno_file, filter_ranges_fnm, vars_in_proxy_geno_file_fnm, 'plink2')
   vars_proxy_ref_panel_has <-
-    fread('vars_found_in_proxy_geno_file.pvar', col.names=c('chr_n','pos','id','ref','alt')) |>
+    fread(vars_in_proxy_geno_file_fnm, col.names=c('chr_n','pos','id','ref','alt')) |>
     merge(score_dt, by=c('chr_n','pos','ref','alt')) # Merge into score_dt to eliminate multiallelics, since var_extraction only filters by chr:pos
   vars_proxy_ref_panel_hasnt <- score_dt[!rbind(vars_proxy_ref_panel_has,vars_found,fill=T), on=c('chr','pos','ref','alt')]
 
