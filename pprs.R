@@ -52,9 +52,9 @@ get_seqarray <- \() { if(!require("BiocManager",quietly=T)) install.packages("Bi
 args <- list()
 args$scratch_folder <- 'scratch'
 args$proxy_geno_file <- 'data/1kG_plink2/all_hg38'
-args$proxy_search_winsize_kb <- '100'
+args$proxy_winsize_kb <- '100'
 args$proxy_r2_cutoff <- '0.8'
-args$plink2_memory_mb <- 8000
+args$memory_mb <- 8000
 args$threads <- 1
 args$output_fnm <- 'my_results.txt'
 args$bcftools_exe <- if(Sys.which('bcftools')=='') './bcftools/bcftools'      else Sys.which('bcftools')
@@ -67,7 +67,7 @@ for(piece in pieces) { parts <- unlist(tstrsplit(piece,' |=')); args[[parts[[1]]
 args <- lapply(args, \(x) x[x!=''])
 
 # --- Input validation ---
-recognized_args <- c('geno_files','sample_file','score_file','scratch_folder','proxy_geno_file','proxy_sample_pop','proxy_search_winsize_kb','proxy_r2_cutoff','plink2_memory_mb','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
+recognized_args <- c('geno_files','sample_file','score_file','scratch_folder','proxy_geno_file','proxy_sample_pop','proxy_winsize_kb','proxy_r2_cutoff','memory_mb','threads','output_fnm','bcftools_exe','bgenix_exe','plink2_exe', paste0('score_file_',c('chr','pos','ref','alt','ea'),'_col'), 'score_file_weight_cols')
 if(any(names(args) %ni% recognized_args)) stop('Unrecognized argument(s):', paste0(' --',setdiff(names(args),recognized_args)))
 
 ## Required args provided? Not too many? They exist?
@@ -280,22 +280,22 @@ if(nrow(vars_not_found)>0) {
     vars_to_find_proxies_for_fnm <- paste0(
       args$scratch_folder,'/vars_to_find_proxies_for',
       '-r2_',args$proxy_r2_cutoff,
-      '-win_', args$proxy_search_winsize,
+      '-win_', args$proxy_winsize_kb,
       '-pop_', args$proxy_sample_pop,
       '-', digest::digest(vars_not_found, algo='md5'),
       # TODO args$proxy_geno_file too
       '.txt')
     writeLines(vars_proxy_ref_panel_has[,paste0(sub('chr','',chr),':',pos,':',ref,':',alt)], vars_to_find_proxies_for_fnm) # Hardcoded no-chr-prefix naming for the PLINK2 1kG files.
     proxy_output_fnm <- paste0(vars_to_find_proxies_for_fnm,'.vcor')
-    message('Finding possible proxies in proxy_geno_file, within ',args$proxy_search_winsize_kb,'kb windows and with r^2 > ',args$proxy_r2_cutoff,'...')
+    message('Finding possible proxies in proxy_geno_file, within ',args$proxy_winsize_kb,'kb windows and with r^2 > ',args$proxy_r2_cutoff,'...')
     if(!file.exists(proxy_output_fnm)) system(paste(
       args$plink2_exe, '--pfile', args$proxy_geno_file,
       plink_pop_flag,
       '--r2-unphased cols=+ref,+alt1,+maj,-id',
-        '--ld-window-kb', args$proxy_search_winsize,
+        '--ld-window-kb', args$proxy_winsize_kb,
         '--ld-window-r2', args$proxy_r2_cutoff,
         '--ld-snp-list', vars_to_find_proxies_for_fnm,
-        '--memory', args$plink2_memory_mb,
+        '--memory', args$memory_mb,
         '--out', vars_to_find_proxies_for_fnm
     ), ignore.stdout=T)
 
@@ -448,10 +448,10 @@ if(nrow(vars_not_found>0)) {
     "\x1b[31m score_file variants were not found besides\x1b[m:\n",
     paste(capture.output(proxies_otherwise_not_found),collapse='\n'),
     "\n\x1b[36mTo recover these, you'll need to provide either:",
-    "\n  1. Bigger --proxy_search_winsize (but it will take longer to calcualte)",
-    "\n  2. Lower  --proxy_r2_cufoff      (but your proxies may be less accurate)",
-    "\n  3. Other  --proxy_sample_pop     to subset the reference panel to a population which more closely matches the population of your geno_files",
-    "\n  4. A new  --proxy_geno_file      entirely.\x1b[m\n"
+    "\n  1. Bigger --proxy_winsize_kb (but it will take longer to calcualte)",
+    "\n  2. Lower  --proxy_r2_cufoff  (but your proxies may be less accurate)",
+    "\n  3. Other  --proxy_sample_pop to subset the reference panel to a population which more closely matches the population of your geno_files",
+    "\n  4. A new  --proxy_geno_file  entirely.\x1b[m\n"
   )
 
 }
