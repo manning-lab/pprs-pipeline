@@ -1,4 +1,5 @@
 These score files were manually created using weights sourced from:
+  + coffee: (10.1001/jamainternmed.2018.2425)
   + alzhimers: Broad Institute server /humgen/florezlab/users/ksmith/new_bNMF_analyses/alzheimers/UKBB_pPS/v11/score_info/
   + dicorpo2024: TODO (10.2337/dc21-1395)
   + suziki2024: TODO (10.1038/s41586-024-07019-6)
