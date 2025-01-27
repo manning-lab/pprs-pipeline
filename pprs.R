@@ -267,8 +267,7 @@ if(nrow(vars_not_found)>0) {
       unlink(file.path(d,'all_hg38.pvar.zst'))
   }
 
-  if(geno_files_type=='bgen') { writeLines(vars_not_found[,paste0(chr_n,':', pos,'-', pos)], filter_ranges_fnm)
-  } else                      { writeLines(vars_not_found[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm) }
+  writeLines(vars_not_found[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm)
   vars_in_proxy_geno_file_fnm <- paste0(args$scratch_folder,'/vars_in_proxy_geno_file.pvar') # FIXME better unique name that won't confict if running multiple instances of the pipeline concurrently
   var_extraction(args$proxy_geno_file, filter_ranges_fnm, vars_in_proxy_geno_file_fnm, 'plink2')
   vars_proxy_ref_panel_has <-
