@@ -200,6 +200,7 @@ var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm, geno_files_type) {
     )
     else if(geno_files_type=='plink1') paste(
       args$plink2_exe, '--bfile', geno_file,
+      '--memory', args$memory_mb,
       '--rm-dup force-first', # If dups, PLINK errors unless this is here.
       '--extract bed1', filter_ranges_fnm,
       '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm), # PLINK automatically adds '.pvar' to the name
@@ -207,6 +208,7 @@ var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm, geno_files_type) {
     )
     else if(geno_files_type=='plink2') paste(
       args$plink2_exe, '--pfile', geno_file,
+      '--memory', args$memory_mb,
       '--rm-dup force-first',
       '--extract bed1', filter_ranges_fnm,
       '--make-just-pvar cols= --out', sub('.pvar$','',output_fnm),
@@ -220,7 +222,7 @@ var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm, geno_files_type) {
       seqClose(gds)
       ' ' # Dummy cmd
     }
-  system(cmd, ignore.stderr=T)
+  system(cmd)
   # TODO fread() the output_fnm and rewrite it back out w/ nicer colnames so I don't have to specify col.names= every time I fread it later
 }
 vars_found_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files),'.pvar')
@@ -365,12 +367,14 @@ if(!file.exists(                                   geno_subset_file)) {
       args$plink2_exe, '--bfile', geno_file,
       '--extract bed1', filter_ranges_fnm,
       '--make-bed --out', geno_subset_file,
+      '--memory', args$memory_mb,
       ' 2>&1 >/dev/null'
     )
     else if(geno_files_type=='plink2') paste(
       args$plink2_exe, '--pfile', geno_file,
       '--extract bed1', filter_ranges_fnm,
       '--make-pgen --out', geno_subset_file,
+      '--memory', args$memory_mb,
       ' 2>&1 >/dev/null'
     )
     else if(geno_files_type=='gds') {
@@ -414,6 +418,7 @@ plink_prs_cmds <- paste(
     'cols=scoresums', # Output plain sum(dosages*weights), without averaging, so that we can sum scores across chromosomes. Then we can take the average.
     'list-variants',
   '--score-col-nums', paste0('3-',ncol(score_dt_simple)), # Skip ID & effect allele columns
+  '--memory', args$memory_mb,
   #'--rm-dup force-first',
   plink_output_flags
 )
