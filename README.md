@@ -20,6 +20,8 @@ Rscript pprs.R "
   --proxy_winsize_kb <distance to search for proxies> (default 100)
   --proxy_sample_pop <population code like AFR>
 
+  --allow_allele_flips
+
   --bcftools_exe <path/to/bcftools> (default: bcftools or auto-installation)
   --bgenix_exe   <path/to/bgenix>   (default:  bgenix  or auto-installation)
   --plink2_exe   <path/to/plink2>   (default:  plink2  or auto-installation)
@@ -43,6 +45,7 @@ Rscript pprs.R "
   - `--proxy_r2_cutoff`: The minimum R^2 correlation that proxies are allowed to have.
   - `--proxy_winsize_kb`: The larger the window size, the longer it will take to calculate proxies.
   - `--proxy_sample_pop`: [See here](https://github.com/CBIIT/LDlinkR?tab=readme-ov-file#utility-function-example) the list of accepted codes.
++ **`--allow_allele_flips`** Allows variants in your score file to have ambiguous ref/alt allele. Useful if you only know the effect allele and non-effect alleles.
 
 # Dependencies
 + **[R](https://cloud.r-project.org/) (>=4.1)**
