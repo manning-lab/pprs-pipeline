@@ -277,6 +277,7 @@ if(nrow(vars_not_found)>0) {
 
   writeLines(vars_not_found[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm)
   vars_proxy_geno_file_has_fnm <- paste0(args$scratch_folder,'/vars_in_proxy_geno_file.pvar') # FIXME better unique name that won't confict if running multiple instances of the pipeline concurrently
+  unlink(vars_proxy_geno_file_has_fnm) # Otherwise, if var_extraction finds nothing and thus doesn't return a file, file from a previous run could be mistakenly used. Could also be fixed by fixing the FIXME above.
   var_extraction(args$proxy_geno_file, filter_ranges_fnm, vars_proxy_geno_file_has_fnm, 'plink2')
 
   if(file.exists(vars_proxy_geno_file_has_fnm)) {
@@ -368,7 +369,6 @@ if(geno_files_type=='bgen') { writeLines(score_dt[,paste0(chr,':', pos,'-', pos)
 } else                      { writeLines(score_dt[,paste0(chr,'\t',pos,'\t',pos)], filter_ranges_fnm) }
 
 geno_extraction <- \(geno_file, filter_ranges_fnm, geno_subset_file) {
-if(!file.exists(                                   geno_subset_file)) {
   cmd <-
     if(geno_files_type=='bgen') paste(
       args$bgenix_exe, '-g', geno_file,
@@ -402,7 +402,7 @@ if(!file.exists(                                   geno_subset_file)) {
       ' '
     }
   system(cmd, ignore.stderr=T)
-}}
+}
 
 message('Extracting genotype data...')
 mcmapply(args$geno_files, filter_ranges_fnm, geno_subset_file_paths, FUN = geno_extraction, mc.cores=args$threads) |> invisible()
