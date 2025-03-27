@@ -226,23 +226,24 @@ var_extraction <- \(geno_file, filter_ranges_fnm, output_fnm, geno_files_type) {
   system(cmd)
   # TODO fread() the output_fnm and rewrite it back out w/ nicer colnames so I don't have to specify col.names= every time I fread it later
 }
-vars_found_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files),'.pvar')
+vars_geno_files_have_fnms <- paste0(args$scratch_folder,'/',basename(args$score_file),'-',basename(args$geno_files),'.pvar')
 
 message('Checking for variants in the score_file missing from the geno_files...')
-mcmapply(args$geno_files, filter_ranges_fnm, vars_found_fnms, geno_files_type, FUN=var_extraction, mc.cores=args$threads) |> invisible()
+mcmapply(args$geno_files, filter_ranges_fnm, vars_geno_files_have_fnms, geno_files_type, FUN=var_extraction, mc.cores=args$threads) |> invisible()
 
-vars_found <- do.call(rbind, lapply(vars_found_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
-if(nrow(vars_found)>0 && all(vars_found$chr %in% score_dt$chr)) { # PLINK & seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
-  vars_not_found         <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref,    alt    )]) # Will count as not found if ref/alt don't match
-  vars_not_found_flipped <- fsetdiff(score_dt[,.(chr,pos,ref,alt)], vars_found[,.(chr,pos,ref=alt,alt=ref)])
+vars_geno_files_have <- do.call(rbind, lapply(vars_geno_files_have_fnms, fread, col.names=c('chr','pos','id','ref','alt'))) |> suppressWarnings()
+vars_geno_files_havent <- score_dt
+if(nrow(vars_geno_files_have)>0 && all(vars_geno_files_have$chr %in% score_dt$chr)) { # PLINK & seqSetFilterPos may return variants with integer-encoded chrs even if "chr#" strings were provided. Hence the additional check on chrs.
+  vars_geno_files_havent         <- fsetdiff(vars_geno_files_havent[,.(chr,pos,ref,alt)], vars_geno_files_have[,.(chr,pos,ref,    alt    )]) # Will count as not found if ref/alt don't match
+  vars_geno_files_havent_flipped <- fsetdiff(vars_geno_files_havent[,.(chr,pos,ref,alt)], vars_geno_files_have[,.(chr,pos,ref=alt,alt=ref)])
   if(!is.null(args$allow_allele_flips)) {
-    score_dt[!vars_not_found_flipped, on=.(chr,pos,ref,alt), `:=`(ref=alt,alt=ref)]
-    vars_not_found <- fintersect(vars_not_found, vars_not_found_flipped)
+    if(nrow(vars_geno_files_havent)>0) { score_dt[vars_geno_files_havent, on=.(chr,pos,ref,alt), `:=`(ref=alt,alt=ref)] } # For variants not found, try flipping them.
+    vars_geno_files_havent <- fintersect(vars_geno_files_havent, vars_geno_files_havent_flipped)
   }
-} else { vars_not_found <- score_dt } # TODO messy way of doing things
+}
 
-if(nrow(vars_not_found)==nrow(score_dt)) {
-  unlink(vars_found_fnms)
+if(nrow(vars_geno_files_havent)==nrow(score_dt)) {
+  unlink(vars_geno_files_have_fnms)
   stop('No IDs from score_file were found in geno_files! This might be caused by:
         1. Chromosome naming mismatch between your score file and the geno type data, e.g. "1" vs. "chr1".
         2. Your ref/alt allele columns could be flipped.
@@ -250,15 +251,15 @@ if(nrow(vars_not_found)==nrow(score_dt)) {
   # TODO print out table of example chr Ids from each file.
 }
 
-vars_not_found <- merge(vars_not_found,score_dt) # We'll need the effect allele (ea) column in vars_not_found later, to determine which proxy allele corresponds to the original effect allele.
-proxies_not_found <- vars_not_found
+vars_geno_files_havent <- merge(vars_geno_files_havent,score_dt, by=c('chr','pos'), suffixes=c('.x','')) # We'll need the effect allele (ea) column in vars_geno_files_havent later, to determine which proxy allele corresponds to the original effect allele.
+proxies_not_found <- vars_geno_files_havent
 
-message('\x1b[33m',nrow(vars_not_found),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.')
+message('\x1b[33m',nrow(vars_geno_files_havent),'/',nrow(score_dt),'\x1b[m variant IDs in score file not found in the geno_files.')
 
 
 # Find proxies for score file variants mising from the genotype data
 # TODO create 'eur_sample_ids.txt' 'afr_sample_ids.txt' etc. for later
-if(nrow(vars_not_found)>0) {
+if(nrow(vars_geno_files_havent)>0) {
 
   # If default 1kG proxy_geno_file and it's not already present, download it.
   if(args$proxy_geno_file %in% c('data/1kG_plink2/all_hg38','examples/data/1kG_plink2/all_hg38') & !file.exists(paste0(args$proxy_geno_file,'.pgen'))) {
@@ -275,41 +276,42 @@ if(nrow(vars_not_found)>0) {
       unlink(file.path(d,'all_hg38.pvar.zst'))
   }
 
-  writeLines(vars_not_found[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm)
+  writeLines(vars_geno_files_havent[,paste0(chr_n,'\t',pos,'\t',pos)], filter_ranges_fnm)
   vars_proxy_geno_file_has_fnm <- paste0(args$scratch_folder,'/vars_in_proxy_geno_file.pvar') # FIXME better unique name that won't confict if running multiple instances of the pipeline concurrently
   unlink(vars_proxy_geno_file_has_fnm) # Otherwise, if var_extraction finds nothing and thus doesn't return a file, file from a previous run could be mistakenly used. Could also be fixed by fixing the FIXME above.
   var_extraction(args$proxy_geno_file, filter_ranges_fnm, vars_proxy_geno_file_has_fnm, 'plink2')
 
+  vars_proxy_geno_file_hasnt <- vars_geno_files_havent
   if(file.exists(vars_proxy_geno_file_has_fnm)) {
-    vars_proxy_geno_file_has <- fread(vars_proxy_geno_file_has_fnm, col.names=c('chr_n','pos','id','ref','alt'))
+    vars_proxy_geno_file_has   <- fread(vars_proxy_geno_file_has_fnm, col.names=c('chr_n','pos','id','ref','alt'))
     if(nrow(vars_proxy_geno_file_has)>0) {
-      vars_proxy_geno_file_hasnt         <- fsetdiff(vars_not_found[,.(chr_n,pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref,    alt    )])
-      vars_proxy_geno_file_hasnt_flipped <- fsetdiff(vars_not_found[,.(chr_n,pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref=alt,alt=ref)])
+      vars_proxy_geno_file_hasnt         <- fsetdiff(vars_geno_files_havent[,.(chr_n,pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref,    alt    )])
+      vars_proxy_geno_file_hasnt_flipped <- fsetdiff(vars_geno_files_havent[,.(chr_n,pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref=alt,alt=ref)])
       if(!is.null(args$allow_allele_flips)) {
-        score_dt[!vars_proxy_geno_file_hasnt_flipped, on=.(chr_n,pos,ref,alt), `:=`(ref=alt,alt=ref)]
+        if(nrow(vars_proxy_geno_file_hasnt)>0) { score_dt[vars_proxy_geno_file_hasnt, on=.(chr_n,pos,ref,alt), `:=`(ref=alt,alt=ref)] } # Try flipping the alleles the proxy_geno_file doesn't have.
         vars_proxy_geno_file_hasnt <- fintersect(vars_proxy_geno_file_hasnt, vars_proxy_geno_file_hasnt_flipped)
       }
     }
-    vars_proxy_geno_file_has <- vars_proxy_geno_file_has |> merge(score_dt, by=c('chr_n','pos','ref','alt')) # Merge w/ all=F to eliminate multiallelics, since var_extraction only filters by chr:pos.
-  } else { vars_proxy_geno_file_hasnt <- vars_not_found }
-  # TODO merge the vars_proxy_geno_file_hasn't file w/ score_dt s.t. more info shows up in final recap messages.
+    vars_proxy_geno_file_has   <- vars_proxy_geno_file_has   |> merge(score_dt, by=c('chr_n','pos','ref','alt')) # Merge w/ all=F to eliminate multiallelics, since var_extraction only filters by chr:pos.
+    vars_proxy_geno_file_hasnt <- vars_proxy_geno_file_hasnt |> merge(score_dt, by=c('chr_n','pos'), suffixes=c('','.y')) # Merging w/ score_dt in order to add information to the final print-outs.
+  }
 
   # TODO what happens if a variant is monoallelic in chosen population? I'm guessing PLINK handles it w/o fuss, but just to make sure
-  message('\x1b[33m',nrow(vars_proxy_geno_file_hasnt),'/',nrow(vars_not_found),'\x1b[m were not found in the proxy_geno_file either.')
-  if(nrow(vars_proxy_geno_file_hasnt) != nrow(vars_not_found)) {
+  message('\x1b[33m',nrow(vars_proxy_geno_file_hasnt),'/',nrow(vars_geno_files_havent),'\x1b[m were not found in the proxy_geno_file either.')
+  if(nrow(vars_proxy_geno_file_hasnt) != nrow(vars_geno_files_havent)) {
     vars_to_find_proxies_for_fnm <- paste0(
       args$scratch_folder,'/vars_to_find_proxies_for',
       '-r2_',args$proxy_r2_cutoff,
       '-win_', args$proxy_winsize_kb,
       '-pop_', args$proxy_sample_pop,
-      '-', digest::digest(vars_not_found, algo='md5'),
+      '-', digest::digest(vars_geno_files_havent, algo='md5'),
       # TODO args$proxy_geno_file too
       '.txt')
     writeLines(vars_proxy_geno_file_has[,paste0(sub('chr','',chr),':',pos,':',ref,':',alt)], vars_to_find_proxies_for_fnm) # Hardcoded no-chr-prefix naming for the PLINK2 1kG files.
     proxy_output_fnm <- paste0(vars_to_find_proxies_for_fnm,'.vcor')
 
     message('Finding possible proxies in proxy_geno_file, within ',args$proxy_winsize_kb,'kb windows and with r^2 > ',args$proxy_r2_cutoff,'...')
-    if(!file.exists(proxy_output_fnm)) system(paste(
+    system(paste(
       args$plink2_exe, '--pfile', args$proxy_geno_file,
       plink_pop_flag,
       '--r2-unphased cols=+ref,+alt1,+maj,-id',
@@ -322,13 +324,12 @@ if(nrow(vars_not_found)>0) {
 
     proxy_dt <- fread(proxy_output_fnm, col.names=c('chr_n','pos','ref','alt','maj','chr_n_proxy','pos_proxy','ref_proxy','alt_proxy','maj_proxy','r2'))
 
-    if(nrow(proxy_dt)==0) {
-      proxies_not_found <- vars_not_found
-    } else {
-      proxy_dt <- score_dt[,.(chr_n,chr,pos,ref,alt,ea)][proxy_dt,on=c('chr_n','pos','ref','alt')] # Merge to score_dt by chr_n, so that we can recover chr, whose names should agree with the geno_files.
-      proxy_dt[, ea_proxy := fifelse((maj==ea & maj_proxy==ref_proxy), ref_proxy, alt_proxy)]
+    proxies_not_found <- vars_geno_files_havent
+    if(nrow(proxy_dt>0)) {
+      proxy_dt <- score_dt[,.(chr_n,chr,pos,ref,alt,ea)][proxy_dt,on=.(chr_n,pos,ref,alt)] # Merge to score_dt by chr_n, so that we can recover chr, whose names should agree with the geno_files.
+      proxy_dt[, ea_proxy := fifelse(maj==ea & maj_proxy==ref_proxy, ref_proxy, alt_proxy)]
 
-      if(nrow(proxy_dt)==0) { proxies_not_found <- vars_not_found } else {
+      if(nrow(proxy_dt)>0) {
         if(geno_files_type=='bgen') { writeLines(proxy_dt[,paste0(chr,':', pos_proxy,'-', pos_proxy)], filter_ranges_fnm)
         } else                      { writeLines(proxy_dt[,paste0(chr,'\t',pos_proxy,'\t',pos_proxy)], filter_ranges_fnm) }
 
@@ -341,19 +342,22 @@ if(nrow(vars_not_found)>0) {
         proxies_found <- do.call(rbind, proxies_found_fnms |> lapply(fread, col.names=c('chr_proxy','pos_proxy','id_proxy','ref_proxy','alt_proxy'))) |> suppressWarnings()
         proxies_found[, chr_n_proxy := as.numeric(sub('chr','',chr_proxy))] |> invisible() # proxy_dt always has no chr prefix because it's always from 1kG file, but genotype_data might have it
 
-        if(nrow(proxies_found)==0) { # May happen if none of the proxies are present in the geno_files
-          proxies_not_found <- vars_not_found
-        } else {
-          proxies_found <- proxy_dt[proxies_found, on=c('chr_n_proxy','pos_proxy','ref_proxy','alt_proxy')] # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
+        if(nrow(proxies_found)>0) {
+          proxies_found    <- proxy_dt[proxies_found, on=.(chr_n_proxy,pos_proxy,ref_proxy,alt_proxy)] # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
           proxies_best_idx <- proxies_found[, .I[which.max(r2)], by=.(chr,pos,ref,alt)]$V1
-          proxies_best <- proxies_found[proxies_best_idx]
+          proxies_best     <- proxies_found[proxies_best_idx]
 
-          score_dt <- proxies_best[
-            ][score_dt, on=c('chr','pos','ref','alt') # merge proxies to their original variants
-            ][!is.na(chr_n_proxy), `:=`(chr=chr_proxy, pos=pos_proxy, ref=ref_proxy, alt=alt_proxy, ea=ea_proxy) # Replace original variants that needed proxies by their proxy
+          score_dt[
+            ][, replaced_by_a_proxy := F
+            ][proxies_best, on=.(chr,pos,ref,alt)
+              , `:=`(replaced_by_a_proxy = T,
+                     chr_orig=chr,  pos_orig=pos,  ref_orig=ref,  alt_orig=alt,  ea_orig=ea,  chr_n_orig=chr_n,
+                     chr=chr_proxy, pos=pos_proxy, ref=ref_proxy, alt=alt_proxy, ea=ea_proxy, chr_n=chr_n_proxy)
           ]
 
-          proxies_not_found <- vars_not_found[!proxies_found, on=c('chr','pos','ref','alt')]
+          # TODO Code confusing. Has to do with when I merged with suffix .x and .y before. (Not functionally important, only influences the yellow numbers printed out.)
+          if(is.null(args$allow_allele_flips)) { proxies_not_found <- vars_geno_files_havent[!proxies_found, on=.(chr,pos,ref,    alt    )]
+          } else                               { proxies_not_found <- vars_geno_files_havent[!proxies_found, on=.(chr,pos,ref=alt,alt=ref)] }
         }
       }
     }
@@ -455,19 +459,19 @@ prs_sums <- rbindlist(lapply(prs_file_paths,fread))[, lapply(.SD, sum), by='#IID
 fwrite(prs_sums, args$output_fnm)
 message('\n\x1b[32mDone!\x1b[m PRS results file: ', args$output_fnm)
 
-if(nrow(vars_not_found>0)) {
+if(nrow(vars_geno_files_havent>0)) {
   message('\n\x1b[31mSUMMARY OF OMITTED VARIANTS: \x1b[33m',nrow(proxies_not_found),'/',nrow(score_dt),'\x1b[m')
   proxies_otherwise_not_found <- proxies_not_found[!vars_proxy_geno_file_hasnt, on=c('chr_n','pos','ref','alt')][,chr_n:=NULL]
 
   if(nrow(vars_proxy_geno_file_hasnt )>0) message(
-    "\x1b[33m",nrow(vars_proxy_geno_file_hasnt ),"/",nrow(vars_not_found),
+    "\x1b[33m",nrow(vars_proxy_geno_file_hasnt ),"/",nrow(vars_geno_files_havent),
     "\x1b[31m score_file variants were not found in the geno_files nor proxy_geno_file\x1b[m:\n",
     paste(capture.output(vars_proxy_geno_file_hasnt[,chr_n:=NULL] ),collapse='\n'),
     "\n\x1b[36mTo recover these, you'll need to provide a different --proxy_geno_file.\x1b[m\n"
   )
 
   if(nrow(proxies_otherwise_not_found)>0) message(
-    "\x1b[33m",nrow(proxies_otherwise_not_found),"/",nrow(vars_not_found),
+    "\x1b[33m",nrow(proxies_otherwise_not_found),"/",nrow(vars_geno_files_havent),
     "\x1b[31m score_file variants were not found besides\x1b[m:\n",
     paste(capture.output(proxies_otherwise_not_found),collapse='\n'),
     "\n\x1b[36mTo recover these, you'll need to provide either:",
@@ -476,5 +480,4 @@ if(nrow(vars_not_found>0)) {
     "\n  3. Other  --proxy_sample_pop to subset the reference panel to a population which more closely matches the population of your geno_files",
     "\n  4. A new  --proxy_geno_file  entirely.\x1b[m\n"
   )
-
 }
