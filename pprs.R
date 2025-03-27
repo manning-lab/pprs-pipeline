@@ -123,7 +123,7 @@ if(all(grepl('\\.bgen$|\\.bgi$',args$geno_files))) {
 } else if(all(grepl('\\.pgen$|\\.pvar$|\\.psam$|\\.bim$|\\.fam$',args$geno_files))) {
   args$geno_files <- unique(sub('\\.pgen$|\\.pvar$|\\.psam$|\\.bim$|\\.fam$','',args$geno_files)) # PLINK only takes the file prefix
   geno_files_type <- 'plink2'
-} else if(all(grepl('\\.gds$',args$geno_files))) {
+} else if(all(grepl('\\.gds$|\\.agds$',args$geno_files))) {
   geno_files_type <- 'gds'
 } else { stop(paste(c('Input geno_files format is unsupported, or is a mix of different formats. Below is the list of detected geno_files:',args$geno_files),collapse='\n')) }
 message('Detected ',geno_files_type,' files:\n    ', paste(args$geno_files,collapse='\n    '), '\n')
