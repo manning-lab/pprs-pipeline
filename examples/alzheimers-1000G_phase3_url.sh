@@ -1,7 +1,7 @@
 Rscript ../pprs.R "
   --geno_files http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20181203_biallelic_SNV/*.vcf.gz
 
-  --score_file ../score_files/alzheimers.csv
+  --score_file score_files/alzheimers.csv
 
   --score_file_chr_col Chr
   --score_file_pos_col Pos
