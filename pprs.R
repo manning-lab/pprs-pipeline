@@ -147,7 +147,7 @@ if(length(score_colnms_not_found)>0) stop('Some columns were not found in the sc
 message('Using score file columns:\n',sprintf('%10s: "%s"\n',names(score_colnms),score_colnms))
 
 score_dt <- fread(args$score_file)[,..score_colnms] |> setnames(names(score_colnms))
-score_dt[, chr_n := as.numeric(sub('chr','',chr))] |> invisible()
+score_dt[, chr_n := sub('chr','',chr)] |> invisible()
 
 if(score_dt[, !is.integer(chr) & !is.character(chr)]) message('Warning: score file\'s chromosome column is not character or integer type which is suspicious. Here is a sample: ',        paste(head(score_dt$chr),collapse=' '))
 if(score_dt[, !is.integer(pos)                     ]) message('Warning: score file\'s position column is not integer type which is suspicious. Here is a sample: ',                       paste(head(score_dt$pos),collapse=' '))
@@ -285,8 +285,8 @@ if(nrow(vars_geno_files_havent)>0) {
   if(file.exists(vars_proxy_geno_file_has_fnm)) {
     vars_proxy_geno_file_has   <- fread(vars_proxy_geno_file_has_fnm, col.names=c('chr_n','pos','id','ref','alt'))
     if(nrow(vars_proxy_geno_file_has)>0) {
-      vars_proxy_geno_file_hasnt         <- fsetdiff(vars_geno_files_havent[,.(chr_n,pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref,    alt    )])
-      vars_proxy_geno_file_hasnt_flipped <- fsetdiff(vars_geno_files_havent[,.(chr_n,pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref=alt,alt=ref)])
+      vars_proxy_geno_file_hasnt         <- fsetdiff(vars_geno_files_havent[,.(chr_n=as.character(chr_n),pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref,    alt    )])
+      vars_proxy_geno_file_hasnt_flipped <- fsetdiff(vars_geno_files_havent[,.(chr_n=as.character(chr_n),pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref=alt,alt=ref)])
       if(!is.null(args$allow_allele_flips)) {
         if(nrow(vars_proxy_geno_file_hasnt)>0) { score_dt[vars_proxy_geno_file_hasnt, on=.(chr_n,pos,ref,alt), `:=`(ref=alt,alt=ref)] } # Try flipping the alleles the proxy_geno_file doesn't have.
         vars_proxy_geno_file_hasnt <- fintersect(vars_proxy_geno_file_hasnt, vars_proxy_geno_file_hasnt_flipped)
@@ -322,7 +322,7 @@ if(nrow(vars_geno_files_havent)>0) {
         '--out', vars_to_find_proxies_for_fnm
     ), ignore.stdout=T)
 
-    proxy_dt <- fread(proxy_output_fnm, col.names=c('chr_n','pos','ref','alt','maj','chr_n_proxy','pos_proxy','ref_proxy','alt_proxy','maj_proxy','r2'))
+    proxy_dt <- fread(proxy_output_fnm, col.names=c('chr_n','pos','ref','alt','maj','chr_n_proxy','pos_proxy','ref_proxy','alt_proxy','maj_proxy','r2'))[, `:=`(chr_n=as.character(chr_n), chr_n_proxy=as.character(chr_n_proxy)) ]
 
     proxies_not_found <- vars_geno_files_havent
     if(nrow(proxy_dt>0)) {
@@ -340,7 +340,7 @@ if(nrow(vars_geno_files_havent)>0) {
         mcmapply(args$geno_files, filter_ranges_fnm, proxies_found_fnms, geno_files_type, FUN=var_extraction, mc.cores=args$threads)
 
         proxies_found <- do.call(rbind, proxies_found_fnms |> lapply(fread, col.names=c('chr_proxy','pos_proxy','id_proxy','ref_proxy','alt_proxy'))) |> suppressWarnings()
-        proxies_found[, chr_n_proxy := as.numeric(sub('chr','',chr_proxy))] |> invisible() # proxy_dt always has no chr prefix because it's always from 1kG file, but genotype_data might have it
+        proxies_found[, chr_n_proxy := sub('chr','',chr_proxy)] |> invisible() # proxy_dt always has no chr prefix because it's always from 1kG file, but genotype_data might have it
 
         if(nrow(proxies_found)>0) {
           proxies_found    <- proxy_dt[proxies_found, on=.(chr_n_proxy,pos_proxy,ref_proxy,alt_proxy)] # var_extraction() may have picked up extraneous variants whose chr:pos matches but not ref/alt (since we only filter on ranges). Merging w/ all=F (default) eliminates those.
