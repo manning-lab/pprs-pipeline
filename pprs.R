@@ -283,7 +283,8 @@ if(nrow(vars_geno_files_havent)>0) {
 
   vars_proxy_geno_file_hasnt <- vars_geno_files_havent
   if(file.exists(vars_proxy_geno_file_has_fnm)) {
-    vars_proxy_geno_file_has   <- fread(vars_proxy_geno_file_has_fnm, col.names=c('chr_n','pos','id','ref','alt'))
+    vars_proxy_geno_file_has   <- fread(vars_proxy_geno_file_has_fnm, col.names=c('chr_n','pos','id','ref','alt'),
+                                        colClasses=c('character','integer','character','character','character'))
     if(nrow(vars_proxy_geno_file_has)>0) {
       vars_proxy_geno_file_hasnt         <- fsetdiff(vars_geno_files_havent[,.(chr_n=as.character(chr_n),pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref,    alt    )])
       vars_proxy_geno_file_hasnt_flipped <- fsetdiff(vars_geno_files_havent[,.(chr_n=as.character(chr_n),pos,ref,alt)], vars_proxy_geno_file_has[,.(chr_n,pos,ref=alt,alt=ref)])
@@ -423,8 +424,8 @@ stopifnot(!is.null(plink_input_flags))
 plink_output_flags <- paste0('--allow-misleading-out-arg --out ', geno_subset_file_paths)
 # PRS result files will be '<scratch_folder>/<score_filename>-<geno_filename>.sscore'
 
-score_dt_simple <- score_dt[, cbind(cpraid=paste0(sub('chr','',chr),':',pos,':',ref,':',alt), ea, .SD), .SDcols=patterns('weights[0-9]+')]
-setnames(score_dt_simple, grep('weights[0-9]+',names(score_dt_simple), value=T), score_colnms[grepl('weights',names(score_colnms))]) # TODO very messy way of restoring weight column nms
+score_dt_simple <- score_dt[, cbind(cpraid=paste0(sub('chr','',chr),':',pos,':',ref,':',alt), ea, .SD), .SDcols=patterns('weights[0-9]*')]
+setnames(score_dt_simple, grep('weights[0-9]*',names(score_dt_simple), value=T), score_colnms[grepl('weights',names(score_colnms))]) # TODO very messy way of restoring weight column nms
 score_dt_simple_fnm <- file.path(args$scratch_folder,'score_file-formatted_for_plink.csv') # TODO better run-specific nm
 fwrite(score_dt_simple, score_dt_simple_fnm, sep=' ')
 
@@ -438,7 +439,7 @@ plink_prs_cmds <- paste(
     'header-read', # Use row as names for clusters
     'cols=scoresums', # Output plain sum(dosages*weights), without averaging, so that we can sum scores across chromosomes. Then we can take the average.
     'list-variants',
-  '--score-col-nums', paste0('3-',ncol(score_dt_simple)), # Skip ID & effect allele columns
+  if(ncol(score_dt_simple)>3) { paste0('--score-col-nums ','3-',ncol(score_dt_simple)) }, # Skip ID & effect allele columns
   '--memory', args$memory_mb,
   #'--rm-dup force-first',
   plink_output_flags
